@@ -17,8 +17,19 @@ GlassCard {
     signal stopClicked()
     signal settingsClicked()
     signal deleteClicked()
+    signal contextRequested(real x, real y)
     height: 78
     padding: 18
+
+    MouseArea {
+        anchors.fill: parent
+        acceptedButtons: Qt.RightButton
+        propagateComposedEvents: true
+        onClicked: function(mouse) {
+            if (mouse.button === Qt.RightButton)
+                root.contextRequested(mouse.x, mouse.y)
+        }
+    }
 
     RowLayout {
         anchors.fill: parent

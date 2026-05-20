@@ -1,46 +1,66 @@
 # Scenarios
 
-The **Scenarios** tab is the scenario library and visual step editor.
+The **Scenarios** page is the scenario library and visual node editor.
 
 ## Scenario library
 
-List of scenarios on the left.
+Click the current scenario card to open the library.
 
-- **New** - create a new scenario.
-- **Load** - load the selected one.
-- **Save** - save the current scenario.
-- **Delete** - delete.
+Actions:
+
+- **New** creates a scenario.
+- **Duplicate** copies the selected scenario.
+- **Delete** removes it.
+- **Save** saves name, description and steps.
 
 Scenarios are stored in `scenaries/*.json`.
 
-## Details
-
-Top right:
-
-- **Name** - scenario name (library key).
-- **Description** - description.
-- **Variables in scenario** - detected variables (from steps that use `name/to_var/save_as`).
-
 ## Action map
 
-The main editor is **Action map**:
+The center canvas is the visual scenario map:
 
-- Each block is a scenario step.
-- Blocks are connected by arrows (success/error) to define transitions.
-- Double-click or the edit button opens the step settings modal.
+- drag nodes to reposition steps
+- pan and zoom the canvas
+- connect nodes with success/error links
+- right-click nodes for edit/duplicate/move/delete
+- right-click links to delete them
 
-More about format and transitions: `scenarios/format.md`, `scenarios/flow.md`.
+Transitions are saved as `next_success_step` and `next_error_step`.
 
-## Step modal
+## Node properties
 
-When adding/editing a step, a settings modal opens. Fields depend on the action:
+The right panel edits the selected step:
 
-- For selector-based steps (`click`, `type`, `wait_element`, `extract_text`), selector/type/index/iframe fields are shown.
-- For `http_request`, method/headers/params/body/result fields are shown.
-- For `parse_var`, source variable, pattern, and **Update account** option are shown.
-- For `compare`, operator and right value (variable or text) are shown; branching uses `next_success_step` (True) and `next_error_step` (False).
-- For `write_file`, file name.
-- For `sleep`, duration.
-- For `switch_tab`/`close_tab`, tab index.
+- tag
+- action
+- selector and selector type
+- value / URL / text
+- variable name
+- pattern / targets
+- timeout and sleep duration
+- success/error target tags
+- **Extra JSON** for action-specific fields
 
-If the modal does not fit the screen, it becomes scrollable.
+`Extra JSON` is merged into the step and is used for advanced fields such as HTTP headers/body, compare operator, tab index, file name, attributes and result variables.
+
+The **Raw step** block shows the final JSON for the selected step.
+
+## Action templates
+
+The left panel groups available actions:
+
+- navigation and interaction
+- variables
+- network
+- browser tabs
+- flow and logging
+
+Adding a template creates a default step with safe starter values.
+
+## Shared variables
+
+The **Variables** button opens the shared variables editor. Shared variables can be strings, numbers or lists and are available in all scenarios.
+
+## Run selected scenario
+
+Select a profile in the top bar and press **Run** to execute the current scenario for that profile.

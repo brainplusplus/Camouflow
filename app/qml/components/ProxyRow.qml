@@ -14,14 +14,28 @@ GlassCard {
     property string latency: "?"
     property string status: "Active"
     property color accent: Theme.success
+    property bool selected: false
     signal settingsClicked(string pool, int index)
     signal checkClicked(string pool, int index)
+    signal selectionToggled(string pool, int index, bool selected)
+    signal deleteClicked(string pool, int index)
     height: 80
     padding: 18
 
     RowLayout {
         anchors.fill: parent
         spacing: Math.max(10, Math.min(24, root.width / 70))
+
+        Rectangle {
+            Layout.preferredWidth: 22
+            Layout.preferredHeight: 22
+            Layout.alignment: Qt.AlignVCenter
+            radius: 6
+            color: root.selected ? Theme.primary : Theme.subtle
+            border.color: root.selected ? Theme.primaryLight : Theme.border
+            Text { anchors.centerIn: parent; text: root.selected ? "✓" : ""; color: "white"; font.bold: true; font.pixelSize: 13 }
+            MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.selectionToggled(root.pool, root.proxyIndex, !root.selected) }
+        }
 
         Rectangle {
             Layout.preferredWidth: 42
@@ -56,8 +70,8 @@ GlassCard {
         }
 
         Row {
-            Layout.preferredWidth: 80
-            Layout.minimumWidth: 80
+            Layout.preferredWidth: 124
+            Layout.minimumWidth: 124
             Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
             spacing: 8
             PrimaryButton {
@@ -73,6 +87,13 @@ GlassCard {
                 text: ""
                 secondary: true
                 onClicked: root.settingsClicked(root.pool, root.proxyIndex)
+            }
+            PrimaryButton {
+                width: 36
+                icon: "trash"
+                text: ""
+                danger: true
+                onClicked: root.deleteClicked(root.pool, root.proxyIndex)
             }
         }
     }

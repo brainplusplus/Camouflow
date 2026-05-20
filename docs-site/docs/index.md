@@ -8,9 +8,11 @@ CamouFlow is a desktop app for running browser automation scenarios (Camoufox/Pl
 ## Features
 
 - Stores profiles (accounts) and their assigned proxies.
+- Imports profiles in bulk using a configurable account template.
 - Uses tags to group profiles and run scenarios for the selected tag.
 - Edits scenarios as a chain of steps (transitions, nested scenarios, variables).
 - Supports shared variables to exchange data across profiles/runs.
+- Manages proxy pools with health checks, selection, release and removal actions.
 - Keeps execution logs.
 
 ## Data locations

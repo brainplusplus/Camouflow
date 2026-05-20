@@ -20,9 +20,10 @@ class ProxiesBridge(QObject):
     def __init__(self, app_state=None, parent=None) -> None:
         super().__init__(parent)
         self._app_state = app_state
-        self._model = DictListModel(["pool", "name", "location", "address", "type", "latency", "status", "accent", "index"], parent=self)
+        self._model = DictListModel(["pool", "name", "location", "address", "type", "latency", "status", "accent", "index", "selected"], parent=self)
         self._pools_model = DictListModel(["name", "total", "used", "selected"], parent=self)
         self._selected_pool = ""
+        self._selected: set[tuple[str, int]] = set()
         self._active = 0
         self._checking = 0
         self._failed = 0
@@ -94,11 +95,10 @@ class ProxiesBridge(QObject):
         rows: List[Dict[str, Any]] = []
         active = checking = failed = 0
         locations = set()
-        idx = 1
         for pool_name, pool in sorted(pools.items()):
             if self._selected_pool and pool_name != self._selected_pool:
                 continue
-            for entry in pool.get("proxies", []) if isinstance(pool, dict) else []:
+            for pool_index, entry in enumerate(pool.get("proxies", []) if isinstance(pool, dict) else []):
                 value = entry.get("value") if isinstance(entry, dict) else str(entry)
                 value = str(value or "").strip()
                 if not value:
@@ -120,16 +120,16 @@ class ProxiesBridge(QObject):
                 latency = check.get("ms") if isinstance(check, dict) else None
                 rows.append({
                     "pool": pool_name,
-                    "name": str(entry.get("name") or f"{pool_name}-{idx:02d}") if isinstance(entry, dict) else f"{pool_name}-{idx:02d}",
+                    "name": str(entry.get("name") or f"{pool_name}-{pool_index + 1:02d}") if isinstance(entry, dict) else f"{pool_name}-{pool_index + 1:02d}",
                     "location": location,
                     "address": value,
                     "type": type_label,
                     "latency": f"{latency}ms" if isinstance(latency, int) else "?",
                     "status": status,
                     "accent": "#06b6d4" if status == "Active" else "#f59e0b" if status == "Checking" else "#ef4444",
-                    "index": idx - 1,
+                    "index": pool_index,
+                    "selected": (pool_name, pool_index) in self._selected,
                 })
-                idx += 1
         self._active, self._checking, self._failed, self._locations = active, checking, failed, len(locations)
         self._model.set_rows(rows)
         self.modelChanged.emit()
@@ -139,6 +139,7 @@ class ProxiesBridge(QObject):
     def selectPool(self, name: str) -> None:  # noqa: N802
         name = str(name or "")
         self._selected_pool = "" if name == "All pools" else name
+        self._selected.clear()
         self.refresh()
 
 
@@ -280,6 +281,99 @@ class ProxiesBridge(QObject):
         proxies[index]["value"] = value
         self._save(pools)
         self._emit_message("Proxy saved")
+        self.refresh()
+
+    @pyqtSlot(str, int)
+    def deleteProxy(self, pool_name: str, index: int) -> None:  # noqa: N802
+        pool_name = str(pool_name or "").strip()
+        try:
+            index = int(index)
+        except Exception:
+            return
+        pools = self._load()
+        pool = pools.get(pool_name)
+        proxies = pool.get("proxies", []) if isinstance(pool, dict) else []
+        if not (0 <= index < len(proxies)):
+            return
+        proxies.pop(index)
+        self._selected = {
+            (p, i if p != pool_name or i < index else i - 1)
+            for p, i in self._selected
+            if not (p == pool_name and i == index)
+        }
+        self._save(pools)
+        self._emit_message("Proxy deleted")
+        self.refresh()
+
+    @pyqtSlot(str, int, bool)
+    def setProxySelected(self, pool_name: str, index: int, selected: bool) -> None:  # noqa: N802
+        key = (str(pool_name or "").strip(), int(index))
+        if selected:
+            self._selected.add(key)
+        else:
+            self._selected.discard(key)
+        self.refresh()
+
+    @pyqtSlot()
+    def clearSelection(self) -> None:  # noqa: N802
+        self._selected.clear()
+        self.refresh()
+
+    @pyqtSlot()
+    def releaseSelected(self) -> None:  # noqa: N802
+        if not self._selected:
+            self._emit_message("No selected proxies")
+            return
+        pools = self._load()
+        released = 0
+        assigned_names: set[str] = set()
+        for pool_name, index in list(self._selected):
+            proxies = pools.get(pool_name, {}).get("proxies", []) if isinstance(pools.get(pool_name), dict) else []
+            if 0 <= index < len(proxies) and isinstance(proxies[index], dict):
+                assigned = str(proxies[index].get("assigned_to") or "").strip()
+                if assigned:
+                    assigned_names.add(assigned)
+                proxies[index]["assigned_to"] = ""
+                released += 1
+        self._save(pools)
+        if assigned_names:
+            try:
+                from app.storage.db import db_get_accounts, db_update_account
+
+                for acc in db_get_accounts():
+                    name = str(acc.get("name") or "")
+                    if name in assigned_names:
+                        db_update_account(name, {
+                            "proxy_host": "",
+                            "proxy_port": None,
+                            "proxy_user": "",
+                            "proxy_password": "",
+                            "proxy_scheme": "",
+                            "proxy_pool": "",
+                        })
+            except Exception:
+                pass
+        self._emit_message(f"Released {released} proxy(s)")
+        self.refresh()
+
+    @pyqtSlot()
+    def removeSelected(self) -> None:  # noqa: N802
+        if not self._selected:
+            self._emit_message("No selected proxies")
+            return
+        pools = self._load()
+        removed = 0
+        for pool_name in sorted({pool for pool, _ in self._selected}):
+            pool = pools.get(pool_name)
+            proxies = pool.get("proxies", []) if isinstance(pool, dict) else []
+            indices = sorted([idx for pool, idx in self._selected if pool == pool_name], reverse=True)
+            for index in indices:
+                if 0 <= index < len(proxies):
+                    proxies.pop(index)
+                    removed += 1
+        self._selected.clear()
+        self._save(pools)
+        self._emit_message(f"Removed {removed} proxy(s)")
         self.refresh()
 
 

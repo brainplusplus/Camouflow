@@ -10,6 +10,7 @@ Flickable {
     contentHeight: content.height + 48
     clip: true
     property string editingProfile: ""
+    property string contextProfile: ""
 
     function openProfileModal(profileName) {
         var data = profilesBridge.getProfile(profileName, browserSettingsBridge.engine)
@@ -27,6 +28,16 @@ Flickable {
         editCpu.text = data.hardware_concurrency || ""
         profileDialog.open()
     }
+    function openVariablesModal(profileName) {
+        editingProfile = profileName || editingProfile
+        profileVarsJson.text = profilesBridge.getProfileVariables(editingProfile)
+        profileVarsDialog.open()
+    }
+    function openCookiesModal(profileName) {
+        editingProfile = profileName || editingProfile
+        profileCookiesJson.text = profilesBridge.getProfileCookiesJson(editingProfile)
+        profileCookiesDialog.open()
+    }
     function openTagsModal() {
         settingsBridge.refresh()
         tagName.text = ""
@@ -42,6 +53,7 @@ Flickable {
         RowLayout {
             width: parent.width
             PageHeader { Layout.fillWidth: true; title: "Profiles"; subtitle: "Manage your browser profiles and sessions" }
+            PrimaryButton { Layout.preferredWidth: 116; height: 42; text: "Import"; icon: "save"; secondary: true; onClicked: importDialog.open() }
             PrimaryButton { Layout.preferredWidth: 116; height: 42; text: "Tags"; icon: "settings"; secondary: true; onClicked: root.openTagsModal() }
             PrimaryButton { Layout.preferredWidth: 116; height: 42; text: "New Profile"; icon: "plus"; onClicked: profilesBridge.createProfile() }
         }
@@ -92,6 +104,137 @@ Flickable {
                 onStopClicked: profilesBridge.stopProfile(model.name)
                 onSettingsClicked: root.openProfileModal(model.name)
                 onDeleteClicked: profilesBridge.deleteProfile(model.name)
+                onContextRequested: function(x, y) {
+                    root.contextProfile = model.name
+                    profileMenu.popup(x + 28, y + 150)
+                }
+            }
+        }
+        GlassCard {
+            width: parent.width
+            height: 118
+            padding: 18
+            RowLayout {
+                anchors.fill: parent
+                spacing: 12
+                Column {
+                    Layout.preferredWidth: 210
+                    spacing: 6
+                    Text { text: "Run scenario for tag"; color: Theme.text; font.pixelSize: 16; font.bold: true }
+                    Text { text: "Batch run selected scenario by profile tag"; color: Theme.muted; font.pixelSize: 12 }
+                }
+                Rectangle {
+                    Layout.preferredWidth: 180
+                    height: 42
+                    radius: 11
+                    color: Theme.subtle
+                    border.color: Theme.border
+                    ComboBox {
+                        id: runTagSelect
+                        anchors.fill: parent
+                        anchors.margins: 6
+                        model: profilesBridge.stagesModel
+                        textRole: "name"
+                        background: Item {}
+                        contentItem: Text { text: runTagSelect.displayText || "Tag"; color: Theme.text; verticalAlignment: Text.AlignVCenter; font.pixelSize: 13; elide: Text.ElideRight }
+                    }
+                }
+                Rectangle {
+                    Layout.preferredWidth: 240
+                    height: 42
+                    radius: 11
+                    color: Theme.subtle
+                    border.color: Theme.border
+                    ComboBox {
+                        id: runScenarioSelect
+                        anchors.fill: parent
+                        anchors.margins: 6
+                        model: scenariosBridge.model
+                        textRole: "name"
+                        background: Item {}
+                        contentItem: Text { text: runScenarioSelect.displayText || "Scenario"; color: Theme.text; verticalAlignment: Text.AlignVCenter; font.pixelSize: 13; elide: Text.ElideRight }
+                    }
+                }
+                FormField { id: runMax; Layout.preferredWidth: 90; label: "Max"; text: "10" }
+                PrimaryButton {
+                    Layout.preferredWidth: 130
+                    text: "Run for tag"
+                    icon: "play"
+                    onClicked: scenariosBridge.runForTag(runTagSelect.currentText, runScenarioSelect.currentText, parseInt(runMax.text || "1"))
+                }
+                PrimaryButton { Layout.preferredWidth: 120; text: "Variables"; icon: "settings"; secondary: true; onClicked: variablesDialog.open() }
+            }
+        }
+    }
+
+    Dialog {
+        id: importDialog
+        modal: true
+        width: Math.min(900, root.width - 80)
+        height: Math.min(680, root.height - 80)
+        anchors.centerIn: Overlay.overlay
+        padding: 0
+        background: Rectangle { color: Theme.elevated; radius: 22; border.color: Theme.border }
+        contentItem: Column {
+            anchors.fill: parent
+            anchors.margins: 22
+            spacing: 14
+            Text { text: "Import Profiles"; color: Theme.text; font.pixelSize: 24; font.bold: true }
+            FormField { id: importTemplate; width: parent.width; label: "Account parse template"; text: "{email};{password};{secret_key};{extra};{twofa_url}" }
+            Row {
+                width: parent.width
+                spacing: 12
+                FormField { id: importTag; width: (parent.width - 12) / 2; label: "Default tag" }
+                Rectangle {
+                    width: (parent.width - 12) / 2
+                    height: 62
+                    color: "transparent"
+                    Text { text: "Proxy pool"; color: Theme.text; font.pixelSize: 12; font.bold: true }
+                    Rectangle {
+                        anchors.left: parent.left; anchors.right: parent.right; anchors.bottom: parent.bottom
+                        height: 40; radius: 11; color: Theme.subtle; border.color: Theme.border
+                        ComboBox {
+                            id: importProxyPool
+                            anchors.fill: parent
+                            anchors.margins: 6
+                            model: proxiesBridge.poolsModel
+                            textRole: "name"
+                            background: Item {}
+                            contentItem: Text { text: importProxyPool.displayText || "Default"; color: Theme.text; verticalAlignment: Text.AlignVCenter; font.pixelSize: 13 }
+                        }
+                    }
+                }
+            }
+            Text { text: "Profiles, one per line"; color: Theme.text; font.pixelSize: 12; font.bold: true }
+            Rectangle {
+                width: parent.width
+                height: parent.height - 230
+                radius: 14
+                color: Theme.subtle
+                border.color: Theme.border
+                TextArea {
+                    id: importLines
+                    anchors.fill: parent
+                    anchors.margins: 12
+                    color: Theme.text
+                    placeholderText: "user@example.com;pass123;SECRET;note;https://2fa.example.com/"
+                    placeholderTextColor: Theme.dim
+                    background: Item {}
+                    font.pixelSize: 13
+                }
+            }
+            Row {
+                spacing: 10
+                PrimaryButton {
+                    width: 120
+                    text: "Import"
+                    icon: "save"
+                    onClicked: {
+                        profilesBridge.importProfiles(importLines.text, importTemplate.text, importTag.text, importProxyPool.currentText === "All pools" ? "" : importProxyPool.currentText)
+                        importDialog.close()
+                    }
+                }
+                PrimaryButton { width: 100; text: "Cancel"; secondary: true; onClicked: importDialog.close() }
             }
         }
     }
@@ -209,9 +352,147 @@ Flickable {
                             profileDialog.close()
                         }
                     }
+                    PrimaryButton { width: 110; text: "Vars"; secondary: true; onClicked: root.openVariablesModal(root.editingProfile) }
+                    PrimaryButton { width: 120; text: "Cookies"; secondary: true; onClicked: root.openCookiesModal(root.editingProfile) }
                     PrimaryButton { width: 110; text: "Cancel"; secondary: true; onClicked: profileDialog.close() }
                 }
             }
         }
+    }
+
+    Dialog {
+        id: profileVarsDialog
+        modal: true
+        width: Math.min(760, root.width - 80)
+        height: Math.min(620, root.height - 80)
+        anchors.centerIn: Overlay.overlay
+        padding: 0
+        background: Rectangle { color: Theme.elevated; radius: 22; border.color: Theme.border }
+        contentItem: Column {
+            anchors.fill: parent
+            anchors.margins: 22
+            spacing: 14
+            Text { text: "Profile Variables: " + root.editingProfile; color: Theme.text; font.pixelSize: 22; font.bold: true }
+            Rectangle {
+                width: parent.width
+                height: parent.height - 92
+                radius: 14
+                color: Theme.subtle
+                border.color: Theme.border
+                TextArea { id: profileVarsJson; anchors.fill: parent; anchors.margins: 12; color: Theme.text; font.family: "Consolas"; font.pixelSize: 12; background: Item {} }
+            }
+            Row {
+                spacing: 10
+                PrimaryButton { width: 120; text: "Save"; icon: "save"; onClicked: { profilesBridge.saveProfileVariables(root.editingProfile, profileVarsJson.text); profileVarsDialog.close() } }
+                PrimaryButton { width: 110; text: "Cancel"; secondary: true; onClicked: profileVarsDialog.close() }
+            }
+        }
+    }
+
+    Dialog {
+        id: profileCookiesDialog
+        modal: true
+        width: Math.min(840, root.width - 80)
+        height: Math.min(660, root.height - 80)
+        anchors.centerIn: Overlay.overlay
+        padding: 0
+        background: Rectangle { color: Theme.elevated; radius: 22; border.color: Theme.border }
+        contentItem: Column {
+            anchors.fill: parent
+            anchors.margins: 22
+            spacing: 14
+            Text { text: "Cookies JSON: " + root.editingProfile; color: Theme.text; font.pixelSize: 22; font.bold: true }
+            Text { text: "Edit JSON array and save. Encrypted Chromium values may be read-only."; color: Theme.muted; font.pixelSize: 12 }
+            Rectangle {
+                width: parent.width
+                height: parent.height - 122
+                radius: 14
+                color: Theme.subtle
+                border.color: Theme.border
+                TextArea { id: profileCookiesJson; anchors.fill: parent; anchors.margins: 12; color: Theme.text; font.family: "Consolas"; font.pixelSize: 12; background: Item {} }
+            }
+            Row {
+                spacing: 10
+                PrimaryButton { width: 120; text: "Refresh"; secondary: true; onClicked: profileCookiesJson.text = profilesBridge.getProfileCookiesJson(root.editingProfile) }
+                PrimaryButton { width: 120; text: "Save"; icon: "save"; onClicked: { profilesBridge.saveProfileCookiesJson(root.editingProfile, profileCookiesJson.text); profileCookiesDialog.close() } }
+                PrimaryButton { width: 110; text: "Cancel"; secondary: true; onClicked: profileCookiesDialog.close() }
+            }
+        }
+    }
+
+    Dialog {
+        id: variablesDialog
+        modal: true
+        width: Math.min(860, root.width - 80)
+        height: Math.min(560, root.height - 80)
+        anchors.centerIn: Overlay.overlay
+        padding: 0
+        background: Rectangle { color: Theme.elevated; radius: 22; border.color: Theme.border }
+        contentItem: Column {
+            anchors.fill: parent
+            anchors.margins: 22
+            spacing: 16
+            RowLayout {
+                width: parent.width
+                height: 38
+                Text { text: "Shared Variables"; color: Theme.text; font.pixelSize: 22; font.bold: true; Layout.fillWidth: true }
+                PrimaryButton { Layout.preferredWidth: 104; text: "Close"; secondary: true; onClicked: variablesDialog.close() }
+            }
+            RowLayout {
+                width: parent.width
+                height: parent.height - 54
+                spacing: 16
+                ListView {
+                    Layout.preferredWidth: 330
+                    Layout.fillHeight: true
+                    model: settingsBridge.variablesModel
+                    spacing: 8
+                    clip: true
+                    delegate: Rectangle {
+                        width: ListView.view.width
+                        height: 54
+                        radius: 12
+                        color: Theme.subtle
+                        border.color: Theme.border
+                        Text { anchors.left: parent.left; anchors.leftMargin: 12; anchors.verticalCenter: parent.verticalCenter; width: parent.width - 24; text: "[" + model.type + "] " + model.key + ": " + model.value; color: Theme.muted; font.pixelSize: 12; elide: Text.ElideRight }
+                        MouseArea { anchors.fill: parent; onClicked: { sharedKey.text = model.key; sharedType.text = model.type; sharedValue.text = settingsBridge.getVariable(model.key).value || "" } }
+                    }
+                }
+                Column {
+                    Layout.fillWidth: true
+                    Layout.fillHeight: true
+                    spacing: 14
+                    FormField { id: sharedKey; width: parent.width; label: "Key" }
+                    Row {
+                        width: parent.width
+                        spacing: 10
+                        PrimaryButton { width: (parent.width - 20) / 3; text: "string"; secondary: sharedType.text !== "string"; onClicked: sharedType.text = "string" }
+                        PrimaryButton { width: (parent.width - 20) / 3; text: "number"; secondary: sharedType.text !== "number"; onClicked: sharedType.text = "number" }
+                        PrimaryButton { width: (parent.width - 20) / 3; text: "list"; secondary: sharedType.text !== "list"; onClicked: sharedType.text = "list" }
+                    }
+                    FormField { id: sharedType; visible: false; text: "string" }
+                    Text { text: "Value"; color: Theme.text; font.pixelSize: 12; font.bold: true }
+                    Rectangle { width: parent.width; height: 190; radius: 11; color: Theme.subtle; border.color: Theme.border
+                        TextArea { id: sharedValue; anchors.fill: parent; anchors.margins: 10; color: Theme.text; placeholderText: "Value or one list item per line"; placeholderTextColor: Theme.dim; background: Item {} wrapMode: TextArea.Wrap; font.pixelSize: 13 }
+                    }
+                    Row {
+                        spacing: 10
+                        PrimaryButton { width: 130; text: "Save"; icon: "save"; onClicked: settingsBridge.saveVariable(sharedKey.text, sharedType.text, sharedValue.text) }
+                        PrimaryButton { width: 110; text: "Delete"; danger: true; onClicked: settingsBridge.deleteVariable(sharedKey.text) }
+                    }
+                }
+            }
+        }
+    }
+
+    Menu {
+        id: profileMenu
+        MenuItem { text: "Profile settings"; onTriggered: root.openProfileModal(root.contextProfile) }
+        MenuItem { text: "Open browser"; onTriggered: profilesBridge.startProfile(root.contextProfile) }
+        MenuItem { text: "Variables"; onTriggered: root.openVariablesModal(root.contextProfile) }
+        MenuItem { text: "Cookies"; onTriggered: root.openCookiesModal(root.contextProfile) }
+        MenuItem { text: "Run selected scenario"; onTriggered: { scenariosBridge.setRunProfile(root.contextProfile); scenariosBridge.runSelected() } }
+        MenuSeparator {}
+        MenuItem { text: "Delete profile"; onTriggered: profilesBridge.deleteProfile(root.contextProfile) }
     }
 }

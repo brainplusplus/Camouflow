@@ -1,79 +1,59 @@
 # Profiles
 
-The **Profiles** tab is the main workspace for managing profiles (accounts) and running scenarios.
+The **Profiles** page manages local browser profiles, tags, profile variables, cookies and batch scenario runs.
 
-## What is a profile
+## Profile list
 
-A profile is an account record plus related fields (description, proxy, tag, and extra variables). Profiles are stored in `settings/accounts.json`, and browser data is stored in `profiles/`.
+- **New Profile** creates an empty profile.
+- **Import** opens bulk import.
+- **Tags** opens tag management.
+- Search filters by profile name, tags and proxy label.
+- Each row can start/stop a browser session, open profile settings or delete the profile.
+- Right-click a profile for quick actions: settings, open browser, variables, cookies, run selected scenario or delete.
 
-## Main elements
+## Bulk import
 
-### Add profiles
+Use **Import** to add many profiles at once:
 
-The **Add profiles** button opens the import window:
+- Paste profiles, one per line.
+- Set the account parse template, for example:
 
-- Paste accounts (one per line).
-- Set the *Account parse template*.
-- Choose a *Default tag* (optional).
-- Choose a *Proxy pool* (optional).
-
-#### Account import template
-
-The template defines field order, for example:
-
-```
+```text
 {email};{password};{secret_key};{extra};{twofa_url}
 ```
 
-The separator is derived from the template (first chunk between placeholders), usually `;`.
+- Set an optional default tag.
+- Pick an optional proxy pool. CamouFlow assigns the first free proxy from that pool to each imported profile.
 
-Example line for the template above:
+Imported fields are saved as profile variables and can be used in scenarios as `{{email}}`, `{{password}}`, etc.
 
-```
-user@example.com;pass123;SOMESECRET;note;https://2fa.example.com/
-```
+## Profile settings
 
-Each field becomes a profile variable and is available in scenarios as `{{email}}`, `{{password}}`, `{{secret_key}}`, etc.
+The settings dialog edits:
 
-### Profile list
+- name
+- tag
+- proxy host / port / user / password
+- per-profile browser overrides: locale, timezone, user agent, WebGL/GPU vendor, CPU cores
 
-The list shows:
+## Variables and cookies
 
-- **Name** - profile name (ID).
-- **Proxy** - current proxy (if assigned) and pool.
-- **Tags** - current profile tag.
-- **Actions** - quick actions (for example, launch browser).
+From profile settings or the context menu:
 
-#### Profile context menu (right-click)
+- **Vars** edits profile variables as a JSON object.
+- **Cookies** reads profile cookies from local browser storage and saves a JSON cookie array back through the browser context.
 
-- **Profile settings** - profile settings (variables/Camoufox overrides/cookies).
-- **Open browser** - open the browser for the profile (persistent profile).
-- **Delete account** - delete the profile and its folder in `profiles/`.
-- **Assign tag** - assign a tag.
-- **Run scenario** - run a scenario for this profile only.
+Chromium encrypted cookie values can be displayed as `<encrypted>` and may not be reusable.
 
-### Profile settings window
+## Run scenario for tag
 
-The profile window includes:
+The bottom panel runs a selected scenario for profiles matching a tag:
 
-- **Variables** - edit all profile fields (key/value). Available in scenarios as `{{key}}`.
-- **Camoufox** - override global Camoufox settings for this profile (Auto/Set).
-- **Cookies** - view and edit profile cookies.
+- **Tag** selects the profile tag. `All tags` runs across all profiles.
+- **Scenario** selects the scenario.
+- **Max** limits the number of profiles processed.
+- **Run for tag** starts the batch run.
 
-### Search and tag filters
+## Shared variables
 
-- The search box filters by name/description/tag/field preview.
-- **Tags** buttons filter by the selected tag.
-
-### Run scenario for a tag
-
-Bottom panel:
-
-- **Tag** - select a profile tag
-- **Scenario** - select a scenario
-- **Max** - max number of profiles to process per run
-- **Run for tag** - start execution
-
-### Shared variables
-
-The **Shared variables** button opens a shared variables editor. They are available to all profiles and scenarios (see `scenarios/variables.md`).
+The **Variables** button opens the shared variables editor. Shared variables are available to all profiles and scenarios.

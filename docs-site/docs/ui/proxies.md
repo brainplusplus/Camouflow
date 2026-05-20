@@ -1,34 +1,54 @@
 # Proxies
 
-The **Proxies** tab manages proxy pools and assigns proxies to profiles.
+The **Proxies** page manages proxy groups, bulk import, health checks and profile assignments.
 
-## Pools
+## Proxy groups
 
-Pools are listed on the left.
+The left panel contains proxy groups:
 
-- **New pool** - create a new pool.
-- **Rename** - rename the pool.
-- **Delete** - delete the pool.
-
-## Pool details
-
-On the right, for the selected pool:
-
-- Proxy list (multi-select supported).
-- **Check internet** - check connectivity through proxies (default request to `https://ipwho.is/`).
-- **Release selected** - unassign selected proxies from profiles.
-- **Remove selected** - remove selected proxies from the pool.
-
-Proxies are assigned during profile import (via *Proxy pool*) and/or in profile settings.
+- **New** creates a group.
+- **Rename** renames the selected group.
+- **Delete** removes the selected group.
+- **All pools** shows proxies from every group.
 
 ## Bulk import
 
-Paste proxies one per line and click **Append proxies**.
+Use **Import List** / **Add Proxy** and paste proxies one per line.
 
 Supported formats:
 
-- `ip:port:login:password`
-- `scheme://ip:port:login:password` (scheme: `socks5`, `socks4`, `http`, `https`)
-- `user:pass@host:port` is also accepted during checks if present in data.
+```text
+ip:port:login:password
+scheme://ip:port:login:password
+scheme://user:pass@host:port
+user:pass@host:port
+```
 
-Duplicates are ignored on import.
+Duplicates are ignored during bulk import.
+
+## Proxy list actions
+
+Each proxy row supports:
+
+- select / unselect
+- health-check one proxy
+- edit name/value
+- delete one proxy
+
+Top actions:
+
+- **Check Group** checks all visible proxies.
+- **Release** clears assignment for selected proxies and removes proxy fields from assigned profiles.
+- **Remove** deletes selected proxies from their pools.
+- **Clear** clears selection.
+
+## Statistics
+
+The page shows:
+
+- active proxies
+- checking proxies
+- failed proxies
+- detected locations
+
+Health checks store latency, status and geo metadata in the proxy pool.

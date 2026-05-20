@@ -17,17 +17,35 @@ from typing import Any, Callable, Dict, List, Optional, Sequence, cast
 
 import socks
 
-from camoufox import AsyncCamoufox
-from camoufox.webgl.sample import sample_webgl
 from app.storage.db import (
     db_get_browser_engine,
     db_get_camoufox_defaults,
     db_get_cloakbrowser_defaults,
     profile_dir_for_email,
 )
-from .camoufox_profile_fingerprint import load_or_create_profile_fingerprint_bundle
 from .locale_mapping import country_to_locale
 from .proxy_utils import LocalSocksProxyServer, ProxyDetails, parse_proxy
+
+
+AsyncCamoufox = Any
+
+
+def _import_camoufox():
+    from camoufox import AsyncCamoufox as imported
+
+    return imported
+
+
+def _sample_webgl(*args, **kwargs):
+    from camoufox.webgl.sample import sample_webgl
+
+    return sample_webgl(*args, **kwargs)
+
+
+def _load_or_create_profile_fingerprint_bundle(*args, **kwargs):
+    from .camoufox_profile_fingerprint import load_or_create_profile_fingerprint_bundle
+
+    return load_or_create_profile_fingerprint_bundle(*args, **kwargs)
 
 
 BROWSER_ENGINE_CAMOUFOX = "camoufox"
@@ -300,12 +318,18 @@ class BrowserInterface:
             except Exception:
                 humanize_arg = True
 
-        fp, stable_overrides, stored_webgl = load_or_create_profile_fingerprint_bundle(
-            Path(self.user_data_dir),
-            os_payload=os_payload,
-            window=window_tuple,
-            logger=self.logger,
-        )
+        try:
+            fp, stable_overrides, stored_webgl = _load_or_create_profile_fingerprint_bundle(
+                Path(self.user_data_dir),
+                os_payload=os_payload,
+                window=window_tuple,
+                logger=self.logger,
+            )
+        except Exception as exc:
+            raise RuntimeError(
+                "Camoufox fingerprint data failed to load. Reinstall dependencies: "
+                "python -m pip install --force-reinstall browserforge apify-fingerprint-datapoints orjson"
+            ) from exc
 
         persistent_context_value = bool(merged.get("persistent_context", True))
         kwargs = {
@@ -414,7 +438,7 @@ class BrowserInterface:
                 )
                 return None
             try:
-                sample_webgl(_target_os_key(fp.navigator.userAgent), vendor, renderer)
+                _sample_webgl(_target_os_key(fp.navigator.userAgent), vendor, renderer)
             except Exception:
                 self.logger.warning(
                     "Invalid WebGL vendor/renderer for %s; falling back to random",
@@ -962,7 +986,8 @@ class BrowserInterface:
     async def _start_camoufox(self) -> None:
         launch_kwargs = self._build_launch_kwargs()
         self.logger.info("Launching Camoufox for %s with kwargs keys: %s", self.profile_name, str(launch_kwargs))
-        self._camoufox_ctx = AsyncCamoufox(**launch_kwargs)
+        Camoufox = _import_camoufox()
+        self._camoufox_ctx = Camoufox(**launch_kwargs)
 
         use_persistent = launch_kwargs.get("persistent_context", False)
         camoufox_result = await self._camoufox_ctx.__aenter__()

@@ -626,3 +626,45 @@ class ScenariosBridge(QObject):
 
         self._emit_message(f"Running {scenario.name}")
         threading.Thread(target=worker, daemon=True).start()
+
+    @pyqtSlot(str, str, int)
+    def runForTag(self, tag: str, scenario_name: str, max_accounts: int) -> None:  # noqa: N802
+        tag = str(tag or "").strip()
+        scenario_name = str(scenario_name or self._selected_name or "").strip()
+        if tag == "All tags":
+            tag = ""
+        if not scenario_name:
+            self._emit_message("Select scenario first")
+            return
+        scenario = db_get_scenario(scenario_name)
+        if not scenario:
+            self._emit_message("Scenario not found")
+            return
+        try:
+            limit = max(1, int(max_accounts or 1))
+        except Exception:
+            limit = 1
+        all_accounts = db_get_accounts()
+        accounts = [
+            acc for acc in all_accounts
+            if not tag or str(acc.get("stage") or "No tag") == tag
+        ]
+        if not accounts:
+            self._emit_message("No profiles for selected tag")
+            return
+
+        def worker() -> None:
+            try:
+                processed = run_scenario(
+                    accounts,
+                    scenario,
+                    max_accounts=limit,
+                    scenario_path=db_get_scenario_path(scenario.name),
+                )
+                self._emit_message(f"Scenario finished: {len(processed)} profile(s)")
+            except Exception as exc:
+                LOGGER.exception("Scenario batch run failed")
+                self._emit_message(f"Scenario failed: {exc}")
+
+        self._emit_message(f"Running {scenario.name} for {tag or 'all tags'}")
+        threading.Thread(target=worker, daemon=True).start()

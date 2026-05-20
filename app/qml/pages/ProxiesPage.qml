@@ -93,8 +93,11 @@ Flickable {
                 GlassCard { Layout.fillWidth: true; Layout.preferredHeight: 64; padding: 14
                     Row { anchors.fill: parent; spacing: 12
                         Text { text: root.bridge && root.bridge.selectedPool ? "Group: " + root.bridge.selectedPool : "All proxy groups"; color: Theme.text; font.pixelSize: 16; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
-                        Item { width: parent.width - 300; height: 1 }
+                        Item { width: Math.max(0, parent.width - 620); height: 1 }
                         PrimaryButton { width: 130; text: "Check Group"; icon: "settings"; secondary: true; onClicked: if (root.bridge) root.bridge.checkAll() }
+                        PrimaryButton { width: 120; text: "Release"; secondary: true; onClicked: if (root.bridge) root.bridge.releaseSelected() }
+                        PrimaryButton { width: 120; text: "Remove"; danger: true; onClicked: if (root.bridge) root.bridge.removeSelected() }
+                        PrimaryButton { width: 90; text: "Clear"; secondary: true; onClicked: if (root.bridge) root.bridge.clearSelection() }
                     }
                 }
                 ListView {
@@ -114,6 +117,10 @@ Flickable {
                         latency: model.latency
                         status: model.status
                         accent: model.accent
+                        selected: model.selected
+                        onSelectionToggled: function(pool, index, selected) {
+                            if (root.bridge) root.bridge.setProxySelected(pool, index, selected)
+                        }
                         onSettingsClicked: function(pool, index) {
                             var payload = root.bridge ? root.bridge.getProxy(pool, index) : {}
                             proxyEditPool.text = payload.pool || pool
@@ -124,6 +131,9 @@ Flickable {
                         }
                         onCheckClicked: function(pool, index) {
                             if (root.bridge) root.bridge.checkProxy(pool, index)
+                        }
+                        onDeleteClicked: function(pool, index) {
+                            if (root.bridge) root.bridge.deleteProxy(pool, index)
                         }
                     }
                 }

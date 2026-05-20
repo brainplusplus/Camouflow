@@ -764,10 +764,11 @@ async def _run_for_account(
     user = acc.get("proxy_user")
     pwd = acc.get("proxy_password")
     if host and port:
+        scheme = str(acc.get("proxy_scheme") or "socks5").strip() or "socks5"
         if user and pwd:
-            proxy = f"socks5://{host}:{port}:{user}:{pwd}"
+            proxy = f"{scheme}://{user}:{pwd}@{host}:{port}"
         else:
-            proxy = f"socks5://{host}:{port}"
+            proxy = f"{scheme}://{host}:{port}"
     runner = ScenarioExecutor(
         account_payload=acc,
         proxy=proxy,

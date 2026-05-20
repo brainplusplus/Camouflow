@@ -30,9 +30,12 @@ The app is built with **Python + PyQt6/QML** and runs automation through **Camou
 ### Profiles
 
 - create, edit and delete browser profiles
+- bulk import profiles with an account parse template
 - start and stop profile browser sessions
 - assign proxy data to a profile
 - manage profile tags
+- edit profile variables and cookies
+- run a scenario for profiles matching a tag
 - per-profile browser overrides:
   - locale
   - timezone
@@ -62,6 +65,8 @@ The app is built with **Python + PyQt6/QML** and runs automation through **Camou
   - `http://user:pass@host:port`
 - rename/delete pools
 - edit/delete individual proxies
+- select multiple proxies
+- release or remove selected proxies
 - health checks per proxy or group
 - pool statistics: active, checking, failed, locations
 
@@ -118,7 +123,6 @@ app/
   storage/           local database/storage helpers
   ui/bridge/         Python <-> QML bridge objects
 images/              current screenshots used by README
-tests/               lightweight data/static checks
 ```
 
 `newdesign/` is a separate React/Vite design prototype and is not the active desktop UI.
@@ -168,8 +172,10 @@ dist\CamouFlow\CamouFlow.exe
 
 ## Tests
 
+There is no full automated test suite yet. For a quick static check:
+
 ```bat
-python -m pytest tests
+python -m compileall app
 ```
 
 ## Data and storage

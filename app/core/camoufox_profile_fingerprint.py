@@ -5,9 +5,25 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
-from browserforge.fingerprints.generator import Fingerprint, NavigatorFingerprint, ScreenFingerprint
-from camoufox.fingerprints import generate_fingerprint
-from camoufox.webgl.sample import sample_webgl
+Fingerprint = Any
+
+
+def _import_fingerprint_types():
+    from browserforge.fingerprints.generator import Fingerprint, NavigatorFingerprint, ScreenFingerprint
+
+    return Fingerprint, NavigatorFingerprint, ScreenFingerprint
+
+
+def _generate_fingerprint(*args, **kwargs):
+    from camoufox.fingerprints import generate_fingerprint
+
+    return generate_fingerprint(*args, **kwargs)
+
+
+def _sample_webgl(*args, **kwargs):
+    from camoufox.webgl.sample import sample_webgl
+
+    return sample_webgl(*args, **kwargs)
 
 _FINGERPRINT_FILE = "camoufox_fingerprint.json"
 _SCHEMA_VERSION = 3
@@ -18,11 +34,12 @@ def _fingerprint_path(profile_dir: Path) -> Path:
 
 
 def _fingerprint_from_dict(payload: Dict) -> Fingerprint:
+    FingerprintCls, NavigatorFingerprint, ScreenFingerprint = _import_fingerprint_types()
     screen_raw = payload.get("screen") or {}
     navigator_raw = payload.get("navigator") or {}
     screen = ScreenFingerprint(**screen_raw)
     navigator = NavigatorFingerprint(**navigator_raw)
-    return Fingerprint(
+    return FingerprintCls(
         screen=screen,
         navigator=navigator,
         headers=dict(payload.get("headers") or {}),
@@ -78,7 +95,7 @@ def _webgl_pair_from_dict(payload: Dict[str, Any]) -> Optional[Tuple[str, str]]:
 
 def _generate_webgl_pair(user_agent: str) -> Optional[Tuple[str, str]]:
     try:
-        data = sample_webgl(_target_os_from_user_agent(user_agent))
+        data = _sample_webgl(_target_os_from_user_agent(user_agent))
     except Exception:
         return None
     vendor = str(data.get("webGl:vendor") or "").strip()
@@ -146,11 +163,11 @@ def load_or_create_profile_fingerprint_bundle(
             if logger:
                 logger.warning("Failed to load Camoufox fingerprint from %s: %s", str(path), exc)
 
-    fp = generate_fingerprint(window=window, os=os_payload)
+    fp = _generate_fingerprint(window=window, os=os_payload)
     for _ in range(4):
         if _fingerprint_gpu_matches_ua(fp):
             break
-        fp = generate_fingerprint(window=window, os=os_payload)
+        fp = _generate_fingerprint(window=window, os=os_payload)
     overrides = _generate_stable_overrides()
     webgl_pair = _generate_webgl_pair(fp.navigator.userAgent)
     if webgl_pair:
