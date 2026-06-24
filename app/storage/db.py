@@ -5,10 +5,14 @@ import re
 import shutil
 import sys
 import tempfile
+import threading
 import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
+
+# Global lock for thread-safe settings read/write
+_SETTINGS_LOCK = threading.Lock()
 
 LOGGER = logging.getLogger(__name__)
 
@@ -124,6 +128,41 @@ CLOAKBROWSER_DEFAULTS: Dict[str, Any] = {
 
 BROWSER_ENGINES = {"camoufox", "cloakbrowser"}
 DEFAULT_BROWSER_ENGINE = "camoufox"
+
+PROXY_MODES = {"none", "random", "fixed", "manual"}
+DEFAULT_PROXY_MODE = "none"
+
+GPU_PRESETS: Dict[str, Dict[str, str]] = {
+    "NVIDIA RTX 3070": {
+        "vendor": "Google Inc. (NVIDIA)",
+        "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 3070 (0x00002484) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    },
+    "NVIDIA RTX 4070": {
+        "vendor": "Google Inc. (NVIDIA)",
+        "renderer": "ANGLE (NVIDIA, NVIDIA GeForce RTX 4070 (0x00002786) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    },
+    "AMD RX 6800 XT": {
+        "vendor": "Google Inc. (AMD)",
+        "renderer": "ANGLE (AMD, AMD Radeon RX 6800 XT (0x000073BF) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    },
+    "Intel UHD 770": {
+        "vendor": "Google Inc. (Intel)",
+        "renderer": "ANGLE (Intel, Intel(R) UHD Graphics 770 (0x00004680) Direct3D11 vs_5_0 ps_5_0, D3D11)",
+    },
+    "Apple M3 (macOS)": {
+        "vendor": "Google Inc. (Apple)",
+        "renderer": "ANGLE (Apple, ANGLE Metal Renderer: Apple M3, Unspecified Version)",
+    },
+}
+
+SCREEN_RESOLUTION_PRESETS: Dict[str, Dict[str, int]] = {
+    "1920 x 1080 (Full HD)": {"width": 1920, "height": 1080},
+    "2560 x 1440 (QHD)": {"width": 2560, "height": 1440},
+    "1366 x 768 (HD)": {"width": 1366, "height": 768},
+    "1440 x 900": {"width": 1440, "height": 900},
+    "1536 x 864": {"width": 1536, "height": 864},
+    "1280 x 720 (720p)": {"width": 1280, "height": 720},
+}
 
 SAMPLE_SCENARIO = {
     "name": "Demo scenario",
@@ -284,6 +323,37 @@ def _normalize_account(payload: Dict[str, Any]) -> Dict[str, Any]:
     data["proxy_user"] = str(data.get("proxy_user") or "").strip()
     data["proxy_password"] = str(data.get("proxy_password") or "").strip()
     data["stage"] = "" if data.get("stage") is None else str(data.get("stage"))
+
+    # --- Tags migration: unify stage/tag/type into tags[] ---
+    if "tags" not in data or not isinstance(data.get("tags"), list):
+        tags: List[str] = []
+        legacy_stage = str(data.get("stage") or "").strip()
+        if legacy_stage:
+            tags.append(legacy_stage)
+        for legacy_key in ("tag", "type"):
+            val = str(data.get(legacy_key) or "").strip()
+            if val and val not in tags:
+                tags.append(val)
+        data["tags"] = tags
+    else:
+        data["tags"] = [str(t).strip() for t in data["tags"] if str(t).strip()]
+
+    # --- Proxy mode ---
+    pm = str(data.get("proxy_mode") or "").strip().lower()
+    if pm not in PROXY_MODES:
+        pm = DEFAULT_PROXY_MODE
+    data["proxy_mode"] = pm
+    data["proxy_pool"] = str(data.get("proxy_pool") or "").strip()
+
+    # --- Browser overrides (unified dict) ---
+    overrides = data.get("browser_overrides")
+    if not isinstance(overrides, dict):
+        overrides = {}
+    data["browser_overrides"] = overrides
+
+    # --- Notes ---
+    data["notes"] = str(data.get("notes") or "")
+
     return data
 
 
@@ -369,12 +439,13 @@ def db_update_account(account_name: str, updates: Dict[str, Any]) -> None:
 
 
 def _load_settings() -> Dict[str, str]:
-    try:
-        data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
-        return data if isinstance(data, dict) else {}
-    except Exception:
-        LOGGER.exception("Failed to load settings.json")
-        return {}
+    with _SETTINGS_LOCK:
+        try:
+            data = json.loads(SETTINGS_FILE.read_text(encoding="utf-8"))
+            return data if isinstance(data, dict) else {}
+        except Exception:
+            LOGGER.exception("Failed to load settings.json")
+            return {}
 
 
 def _save_settings(settings: Dict[str, str]) -> None:
@@ -394,7 +465,17 @@ def _atomic_write_text(path: Path, content: str, *, encoding: str = "utf-8") -> 
             fh.write(content)
             fh.flush()
             os.fsync(fh.fileno())
-        os.replace(tmp_path, path)
+        # Retry os.replace on Windows to handle transient PermissionError
+        # caused by antivirus or other processes briefly locking the file.
+        last_err = None
+        for attempt in range(5):
+            try:
+                os.replace(tmp_path, path)
+                return
+            except PermissionError as exc:
+                last_err = exc
+                time.sleep(0.05 * (attempt + 1))
+        raise last_err
     finally:
         try:
             if os.path.exists(tmp_path):
@@ -611,3 +692,54 @@ def clear_profile_cookies(name: str) -> bool:
 
 # Backward compatibility name
 delete_profile_for_email = delete_profile_for_account
+
+
+_TAG_PALETTE = [
+    "#6366f1", "#22c55e", "#f59e0b", "#ef4444",
+    "#06b6d4", "#a855f7", "#f97316", "#ec4899",
+]
+
+
+def _tag_color_from_hash(tag: str) -> str:
+    total = sum(ord(c) for c in (tag or ""))
+    return _TAG_PALETTE[total % len(_TAG_PALETTE)]
+
+
+def db_get_tag_colors() -> Dict[str, str]:
+    try:
+        data = json.loads(db_get_setting("tag_colors") or "{}")
+        return data if isinstance(data, dict) else {}
+    except Exception:
+        return {}
+
+
+def db_set_tag_colors(colors: Dict[str, str]) -> None:
+    db_set_setting("tag_colors", json.dumps({str(k): str(v) for k, v in (colors or {}).items()}, ensure_ascii=False))
+
+
+def db_resolve_tag_color(tag: str) -> str:
+    tag = str(tag or "").strip()
+    colors = db_get_tag_colors()
+    if tag in colors:
+        return colors[tag]
+    return _tag_color_from_hash(tag)
+
+
+def db_get_all_tags() -> List[str]:
+    tags: set[str] = set()
+    for acc in db_get_accounts():
+        for t in (acc.get("tags") or []):
+            tags.add(str(t))
+        legacy = str(acc.get("stage") or "").strip()
+        if legacy:
+            tags.add(legacy)
+    try:
+        configured = json.loads(db_get_setting("stages_json") or "[]")
+        if isinstance(configured, list):
+            for s in configured:
+                s = str(s or "").strip()
+                if s:
+                    tags.add(s)
+    except Exception:
+        pass
+    return sorted(tags)

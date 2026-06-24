@@ -11,21 +11,188 @@ Flickable {
     clip: true
     property string editingProfile: ""
     property string contextProfile: ""
+    property var selectedTags: []
+
+    // gpuPresetModel indices: 0 = Inherit, 1 = Custom, 2+ = concrete presets
+    ListModel {
+        id: gpuPresetModel
+        ListElement { name: "Inherit" }
+        ListElement { name: "Custom" }
+    }
+    // screenResModel indices: 0 = Inherit, 1 = Custom, 2+ = concrete presets
+    ListModel {
+        id: screenResModel
+        ListElement { name: "Inherit"; width: 0; height: 0 }
+        ListElement { name: "Custom"; width: 0; height: 0 }
+    }
+    ListModel { id: tagSelectorModel }
+    ListModel { id: proxyPoolModel }
+
+    function updateProxyVisibility() {
+        var mode = proxyModeCombo.currentText.toLowerCase()
+        var enabled = proxyEnable.checked
+        proxyModeRow.visible = enabled
+        proxyPoolRow.visible = enabled && mode === "random"
+        proxyFixedRow.visible = enabled && mode === "fixed"
+        proxyManualRow.visible = enabled && (mode === "manual" || mode === "fixed")
+    }
+
+    function updateEngineSpecific() {
+        var isCloak = editorEngine.currentText === "CloakBrowser"
+        launchArgsSection.visible = isCloak
+        fingerprintSeedSection.visible = isCloak
+    }
+
+    function refreshTagList() {
+        var all = JSON.parse(profilesBridge.getAllTags())
+        tagSelectorModel.clear()
+        for (var i = 0; i < all.length; i++) {
+            tagSelectorModel.append({ "name": all[i], "checked": selectedTags.indexOf(all[i]) >= 0 })
+        }
+    }
+
+    function toggleTag(tagName) {
+        var idx = selectedTags.indexOf(tagName)
+        if (idx >= 0)
+            selectedTags.splice(idx, 1)
+        else
+            selectedTags.push(tagName)
+        refreshTagList()
+    }
+
+    function collectProfileData() {
+        var mode = proxyEnable.checked ? proxyModeCombo.currentText.toLowerCase() : "none"
+        var data = {
+            "name": editorName.text,
+            "engine": editorEngine.currentText === "CloakBrowser" ? "cloakbrowser" : "camoufox",
+            "tags": selectedTags,
+            "notes": editorNotes.text,
+            "proxy_mode": mode,
+            "proxy_pool": mode === "random" ? proxyPoolCombo.currentText : "",
+            "proxy_host": "",
+            "proxy_port": "",
+            "proxy_user": "",
+            "proxy_password": "",
+            "proxy_scheme": "socks5",
+        }
+        if (mode === "manual" || mode === "fixed") {
+            data.proxy_host = editorProxyHost.text
+            data.proxy_port = editorProxyPort.text
+            data.proxy_user = editorProxyUser.text
+            data.proxy_password = editorProxyPassword.text
+        }
+
+        var sw = parseInt(editorScreenWidth.text || "0")
+        var sh = parseInt(editorScreenHeight.text || "0")
+        var overrides = {
+            "locale": editorLocale.text,
+            "timezone": editorTimezone.text,
+            "user_agent": editorUserAgent.text,
+            "gpu_vendor": editorGpuVendor.text,
+            "gpu_renderer": editorGpuRenderer.text,
+            "hardware_concurrency": parseInt(editorCpu.text || "0"),
+            "platform": platformCombo.currentText.toLowerCase(),
+            "humanize": humanizeCheckbox.checked,
+            "human_preset": humanPresetCombo.currentText,
+            "geoip": geoipCheckbox.checked,
+            "screen_width": sw,
+            "screen_height": sh,
+            "launch_args": launchArgsField.text.trim() ? launchArgsField.text.split("\n").map(function(s){return s.trim()}).filter(function(s){return s.length>0}) : [],
+            "fingerprint_seed": parseInt(editorFpSeed.text || "0"),
+            "color_scheme": "",
+        }
+        data.overrides = overrides
+        return data
+    }
+
+    function generateSeed() {
+        editorFpSeed.text = String(Math.floor(Math.random() * 999999) + 1)
+    }
 
     function openProfileModal(profileName) {
-        var data = profilesBridge.getProfile(profileName, browserSettingsBridge.engine)
-        editingProfile = profileName
-        editName.text = data.name || profileName
-        editStage.text = data.stage || ""
-        editProxyHost.text = data.proxy_host || ""
-        editProxyPort.text = data.proxy_port || ""
-        editProxyUser.text = data.proxy_user || ""
-        editProxyPassword.text = data.proxy_password || ""
-        editLocale.text = data.locale || ""
-        editTimezone.text = data.timezone || ""
-        editUserAgent.text = data.user_agent || ""
-        editWebgl.text = data.webgl_vendor || ""
-        editCpu.text = data.hardware_concurrency || ""
+        root.editingProfile = profileName
+        var data = profilesBridge.getProfileData(profileName)
+        editorName.text = data.name || profileName
+        editorEngine.currentIndex = data.engine === "cloakbrowser" ? 1 : 0
+
+        // Tags
+        selectedTags = (data.tags instanceof Array) ? data.tags.slice() : []
+        refreshTagList()
+
+        // Notes
+        editorNotes.text = data.notes || ""
+
+        // Proxy
+        var pm = data.proxy_mode || "none"
+        proxyEnable.checked = pm !== "none"
+        // Combo no longer has "None"; Random=0, Fixed=1, Manual=2
+        var pmIdx = ["random","fixed","manual"].indexOf(pm)
+        proxyModeCombo.currentIndex = pmIdx >= 0 ? pmIdx : 0
+        proxyPoolCombo.currentIndex = Math.max(0, proxyPoolCombo.find(data.proxy_pool || ""))
+        editorProxyHost.text = data.proxy_host || ""
+        editorProxyPort.text = data.proxy_port || ""
+        editorProxyUser.text = data.proxy_user || ""
+        editorProxyPassword.text = data.proxy_password || ""
+        updateProxyVisibility()
+
+        // Overrides
+        var ov = data.overrides || {}
+        editorLocale.text = ov.locale || ""
+        editorTimezone.text = ov.timezone || ""
+        editorUserAgent.text = ov.user_agent || ""
+        editorNotes.text = data.notes || ""
+        geoipCheckbox.checked = !!ov.geoip
+        humanizeCheckbox.checked = !!ov.humanize
+        humanPresetCombo.currentIndex = ["default","careful"].indexOf(ov.human_preset || "default")
+        platformCombo.currentIndex = ["","windows","linux","macos"].indexOf(ov.platform || "")
+        // GPU Preset: 0=Inherit, 1=Custom, 2+=concrete presets
+        var gpuVendor = ov.gpu_vendor || ""
+        var gpuRenderer = ov.gpu_renderer || ""
+        editorGpuVendor.text = gpuVendor
+        editorGpuRenderer.text = gpuRenderer
+        var gpuIdx = 0 // default Inherit
+        if (!gpuVendor && !gpuRenderer) {
+            gpuIdx = 0 // Inherit
+        } else {
+            // Try to match a concrete preset
+            gpuIdx = 1 // Custom if no preset matches
+            try {
+                var gpuPresets = JSON.parse(profilesBridge.getGpuPresets())
+                for (var gp = 0; gp < gpuPresets.length; gp++) {
+                    if (gpuPresets[gp].vendor === gpuVendor && gpuPresets[gp].renderer === gpuRenderer) {
+                        gpuIdx = gp + 2 // presets start at index 2
+                        break
+                    }
+                }
+            } catch(e) {}
+        }
+        gpuPresetCombo.currentIndex = gpuIdx
+        editorCpu.text = ov.hardware_concurrency ? String(ov.hardware_concurrency) : ""
+        // Screen Resolution: 0=Inherit, 1=Custom, 2+=concrete presets
+        var sw = ov.screen_width || 0
+        var sh = ov.screen_height || 0
+        var resIdx = 0 // default Inherit
+        if (!sw && !sh) {
+            resIdx = 0 // Inherit
+            editorScreenWidth.text = ""
+            editorScreenHeight.text = ""
+        } else {
+            resIdx = 1 // Custom if no preset matches
+            for (var ri = 2; ri < screenResModel.count; ri++) {
+                var rItem = screenResModel.get(ri)
+                if (rItem.width === sw && rItem.height === sh) {
+                    resIdx = ri
+                    break
+                }
+            }
+            editorScreenWidth.text = String(sw)
+            editorScreenHeight.text = String(sh)
+        }
+        screenResCombo.currentIndex = resIdx
+        editorFpSeed.text = ov.fingerprint_seed ? String(ov.fingerprint_seed) : ""
+        launchArgsField.text = (ov.launch_args instanceof Array) ? ov.launch_args.join("\n") : ""
+
+        updateEngineSpecific()
         profileDialog.open()
     }
     function openVariablesModal(profileName) {
@@ -42,6 +209,21 @@ Flickable {
         settingsBridge.refresh()
         tagName.text = ""
         tagsDialog.open()
+    }
+
+    Component.onCompleted: {
+        // Populate GPU presets model (0=Inherit, 1=Custom already in model)
+        try {
+            var presets = JSON.parse(profilesBridge.getGpuPresets())
+            for (var i = 0; i < presets.length; i++)
+                gpuPresetModel.append({ name: presets[i].name })
+        } catch(e) {}
+        // Populate screen resolution presets (0=Inherit, 1=Custom already in model)
+        try {
+            var resolutions = JSON.parse(profilesBridge.getScreenResolutionPresets())
+            for (var j = 0; j < resolutions.length; j++)
+                screenResModel.append({ name: resolutions[j].name, width: resolutions[j].width, height: resolutions[j].height })
+        } catch(e) {}
     }
 
     Column {
@@ -63,7 +245,7 @@ Flickable {
             height: 38
             orientation: ListView.Horizontal
             spacing: 8
-            model: profilesBridge.stagesModel
+            model: profilesBridge ? profilesBridge.stagesModel : null
             clip: true
             delegate: Rectangle {
                 width: tagText.width + 34
@@ -85,7 +267,7 @@ Flickable {
         ListView {
             width: parent.width
             height: Math.max(520, count * 92)
-            model: profilesBridge.model
+            model: profilesBridge ? profilesBridge.model : null
             spacing: 14
             interactive: false
             delegate: ProfileRow {
@@ -133,7 +315,7 @@ Flickable {
                         id: runTagSelect
                         anchors.fill: parent
                         anchors.margins: 6
-                        model: profilesBridge.stagesModel
+                        model: profilesBridge ? profilesBridge.stagesModel : null
                         textRole: "name"
                         background: Item {}
                         contentItem: Text { text: runTagSelect.displayText || "Tag"; color: Theme.text; verticalAlignment: Text.AlignVCenter; font.pixelSize: 13; elide: Text.ElideRight }
@@ -149,7 +331,7 @@ Flickable {
                         id: runScenarioSelect
                         anchors.fill: parent
                         anchors.margins: 6
-                        model: scenariosBridge.model
+                        model: scenariosBridge ? scenariosBridge.model : null
                         textRole: "name"
                         background: Item {}
                         contentItem: Text { text: runScenarioSelect.displayText || "Scenario"; color: Theme.text; verticalAlignment: Text.AlignVCenter; font.pixelSize: 13; elide: Text.ElideRight }
@@ -197,7 +379,7 @@ Flickable {
                             id: importProxyPool
                             anchors.fill: parent
                             anchors.margins: 6
-                            model: proxiesBridge.poolsModel
+                            model: proxiesBridge ? proxiesBridge.poolsModel : null
                             textRole: "name"
                             background: Item {}
                             contentItem: Text { text: importProxyPool.displayText || "Default"; color: Theme.text; verticalAlignment: Text.AlignVCenter; font.pixelSize: 13 }
@@ -259,7 +441,7 @@ Flickable {
             ListView {
                 width: parent.width - 44
                 height: 360
-                model: settingsBridge.stagesModel
+                model: settingsBridge ? settingsBridge.stagesModel : null
                 spacing: 8
                 clip: true
                 delegate: Rectangle {
@@ -299,8 +481,8 @@ Flickable {
     Dialog {
         id: profileDialog
         modal: true
-        width: Math.min(820, root.width - 80)
-        height: Math.min(720, root.height - 80)
+        width: Math.min(880, root.width - 80)
+        height: Math.min(860, root.height - 60)
         anchors.centerIn: Overlay.overlay
         padding: 0
         background: Rectangle { color: Theme.elevated; radius: 22; border.color: Theme.border }
@@ -308,39 +490,314 @@ Flickable {
             contentWidth: width
             contentHeight: modalContent.height + 44
             clip: true
+            ScrollBar.vertical: ScrollBar { policy: ScrollBar.AsNeeded }
+
             Column {
                 id: modalContent
                 width: parent.width - 44
                 x: 22
                 y: 22
-                spacing: 18
-                Text { text: "Profile Settings"; color: Theme.text; font.pixelSize: 24; font.bold: true }
-                Text { text: "Profile data + per-profile browser overrides for " + browserSettingsBridge.engine; color: Theme.muted; font.pixelSize: 13 }
-                GridLayout {
+                spacing: 20
+
+                // --- Header ---
+                RowLayout {
                     width: parent.width
-                    columns: 2
-                    columnSpacing: 16
-                    rowSpacing: 14
-                    FormField { id: editName; Layout.fillWidth: true; label: "Name" }
-                    FormField { id: editStage; Layout.fillWidth: true; label: "Tag / Scenario" }
-                    FormField { id: editProxyHost; Layout.fillWidth: true; label: "Proxy host" }
-                    FormField { id: editProxyPort; Layout.fillWidth: true; label: "Proxy port" }
-                    FormField { id: editProxyUser; Layout.fillWidth: true; label: "Proxy user" }
-                    FormField { id: editProxyPassword; Layout.fillWidth: true; label: "Proxy password" }
+                    Text { text: "Profile Settings"; color: Theme.text; font.pixelSize: 24; font.bold: true; Layout.fillWidth: true }
+                    Row {
+                        spacing: 8
+                        Text { text: "Engine:"; color: Theme.muted; font.pixelSize: 13; anchors.verticalCenter: parent.verticalCenter }
+                        DarkComboBox {
+                            id: editorEngine
+                            width: 160; height: 34
+                            model: ["Camoufox", "CloakBrowser"]
+                            onActivated: updateEngineSpecific()
+                        }
+                    }
                 }
-                Rectangle { width: parent.width; height: 1; color: Theme.border }
-                Text { text: "Browser Overrides"; color: Theme.text; font.pixelSize: 18; font.bold: true }
-                GridLayout {
+
+                FormField { id: editorName; width: parent.width; label: "Profile Name" }
+
+                // --- Tags section ---
+                Column {
                     width: parent.width
-                    columns: 2
-                    columnSpacing: 16
-                    rowSpacing: 14
-                    FormField { id: editLocale; Layout.fillWidth: true; label: "Locale"; placeholder: "en-US" }
-                    FormField { id: editTimezone; Layout.fillWidth: true; label: "Timezone"; placeholder: "America/New_York" }
-                    FormField { id: editUserAgent; Layout.fillWidth: true; label: "User Agent" }
-                    FormField { id: editWebgl; Layout.fillWidth: true; label: "WebGL / GPU vendor" }
-                    FormField { id: editCpu; Layout.fillWidth: true; label: "CPU cores" }
+                    spacing: 10
+                    Text { text: "Tags"; color: Theme.text; font.pixelSize: 16; font.bold: true }
+                    Flow {
+                        width: parent.width
+                        spacing: 6
+                        Repeater {
+                            model: tagSelectorModel
+                            delegate: Rectangle {
+                                width: tagChipText.width + 28; height: 30; radius: 9
+                                color: model.checked ? Theme.primary : Theme.subtle
+                                border.color: model.checked ? Theme.primaryLight : Theme.border
+                                Text { id: tagChipText; anchors.centerIn: parent; text: model.name; color: model.checked ? "white" : Theme.muted; font.pixelSize: 12; font.bold: true }
+                                MouseArea { anchors.fill: parent; cursorShape: Qt.PointingHandCursor; onClicked: root.toggleTag(model.name) }
+                            }
+                        }
+                    }
                 }
+
+                // --- Proxy section ---
+                Column {
+                    width: parent.width
+                    spacing: 12
+                    Rectangle { width: parent.width; height: 1; color: Theme.border }
+                    Row {
+                        width: parent.width
+                        spacing: 10
+                        Text { text: "Proxy"; color: Theme.text; font.pixelSize: 16; font.bold: true; Layout.fillWidth: true; anchors.verticalCenter: parent.verticalCenter }
+                        DarkCheckBox { id: proxyEnable; text: "Enable"; checked: false; onCheckedChanged: root.updateProxyVisibility() }
+                    }
+                    Row {
+                        id: proxyModeRow
+                        width: parent.width
+                        visible: false
+                        spacing: 10
+                        Text { text: "Mode"; color: Theme.muted; font.pixelSize: 13; width: 70; anchors.verticalCenter: parent.verticalCenter }
+                        DarkComboBox {
+                            id: proxyModeCombo
+                            width: 200; height: 36
+                            model: ["Random", "Fixed", "Manual"]
+                            onActivated: root.updateProxyVisibility()
+                        }
+                    }
+                    Row {
+                        id: proxyPoolRow
+                        width: parent.width
+                        visible: false
+                        spacing: 10
+                        Text { text: "Pool"; color: Theme.muted; font.pixelSize: 13; width: 70; anchors.verticalCenter: parent.verticalCenter }
+                        DarkComboBox {
+                            id: proxyPoolCombo
+                            width: 240; height: 36
+                            model: profilesBridge ? profilesBridge.proxyPoolsModel : null
+                            textRole: "name"
+                        }
+                    }
+                    Row {
+                        id: proxyFixedRow
+                        width: parent.width
+                        visible: false
+                        spacing: 10
+                        Text { text: "Fixed"; color: Theme.muted; font.pixelSize: 13; width: 70; anchors.verticalCenter: parent.verticalCenter }
+                        DarkComboBox {
+                            id: proxyFixedCombo
+                            width: 300; height: 36
+                            placeholderText: "Select proxy"
+                        }
+                    }
+                    GridLayout {
+                        id: proxyManualRow
+                        width: parent.width
+                        visible: false
+                        columns: 2
+                        columnSpacing: 16
+                        rowSpacing: 12
+                        FormField { id: editorProxyHost; Layout.fillWidth: true; Layout.preferredWidth: 1; label: "Proxy Host" }
+                        FormField { id: editorProxyPort; Layout.fillWidth: true; Layout.preferredWidth: 1; label: "Proxy Port" }
+                        FormField { id: editorProxyUser; Layout.fillWidth: true; Layout.preferredWidth: 1; label: "Proxy User" }
+                        FormField { id: editorProxyPassword; Layout.fillWidth: true; Layout.preferredWidth: 1; label: "Proxy Password" }
+                    }
+                }
+
+                // --- Browser Overrides ---
+                Column {
+                    width: parent.width
+                    spacing: 12
+                    Rectangle { width: parent.width; height: 1; color: Theme.border }
+                    Text { text: "Browser Overrides"; color: Theme.text; font.pixelSize: 16; font.bold: true }
+                    Row {
+                        width: parent.width
+                        spacing: 20
+                        DarkCheckBox { id: geoipCheckbox; text: "GeoIP (resolve at start)"; checked: false }
+                        DarkCheckBox { id: humanizeCheckbox; text: "Humanize"; checked: false }
+                    }
+                    Row {
+                        width: parent.width
+                        visible: humanizeCheckbox.checked
+                        spacing: 10
+                        Text { text: "Preset"; color: Theme.muted; font.pixelSize: 13; width: 70; anchors.verticalCenter: parent.verticalCenter }
+                        DarkComboBox {
+                            id: humanPresetCombo
+                            width: 180; height: 36
+                            model: ["default", "careful"]
+                        }
+                    }
+                    GridLayout {
+                        width: parent.width
+                        columns: 2
+                        columnSpacing: 16
+                        rowSpacing: 12
+                        // Uniform preferredWidth + fillWidth forces equal column widths
+                        FormField { id: editorLocale; Layout.fillWidth: true; Layout.preferredWidth: 1; label: "Locale"; placeholder: "en-US" }
+                        FormField { id: editorTimezone; Layout.fillWidth: true; Layout.preferredWidth: 1; label: "Timezone"; placeholder: "America/New_York" }
+                        FormField { id: editorUserAgent; Layout.fillWidth: true; Layout.preferredWidth: 1; label: "User Agent" }
+                        FormField { id: editorCpu; Layout.fillWidth: true; Layout.preferredWidth: 1; label: "CPU Cores"; placeholder: "0 = inherit" }
+                    }
+
+                    // Platform + GPU Preset side by side
+                    GridLayout {
+                        width: parent.width
+                        columns: 2
+                        columnSpacing: 16
+                        rowSpacing: 12
+                        Row {
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 1
+                            spacing: 10
+                            Text { text: "Platform"; color: Theme.muted; font.pixelSize: 13; width: 70; anchors.verticalCenter: parent.verticalCenter }
+                            DarkComboBox {
+                                id: platformCombo
+                                width: 180; height: 36
+                                model: ["Inherit", "Windows", "Linux", "macOS"]
+                            }
+                        }
+                        Row {
+                            Layout.fillWidth: true
+                            Layout.preferredWidth: 1
+                            spacing: 10
+                            Text { text: "GPU Preset"; color: Theme.muted; font.pixelSize: 13; width: 70; anchors.verticalCenter: parent.verticalCenter }
+                            DarkComboBox {
+                                id: gpuPresetCombo
+                                width: 180; height: 36
+                                model: gpuPresetModel
+                                textRole: "name"
+                                onActivated: function(index) {
+                                    // 0 = Inherit, 1 = Custom, 2+ = concrete presets
+                                    if (index === 0) {
+                                        // Inherit: clear vendor/renderer (engine inherits)
+                                        editorGpuVendor.text = ""
+                                        editorGpuRenderer.text = ""
+                                    } else if (index === 1) {
+                                        // Custom: clear so user can type
+                                        editorGpuVendor.text = ""
+                                        editorGpuRenderer.text = ""
+                                    } else {
+                                        var presets = JSON.parse(profilesBridge.getGpuPresets())
+                                        var preset = presets[index - 2]
+                                        editorGpuVendor.text = preset.vendor
+                                        editorGpuRenderer.text = preset.renderer
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    FormField {
+                        id: editorGpuVendor
+                        width: parent.width
+                        label: "GPU Vendor (clear to inherit)"
+                        // Inherit -> disabled; Custom/preset -> enabled
+                        enabled: gpuPresetCombo.currentIndex !== 0
+                    }
+                    FormField {
+                        id: editorGpuRenderer
+                        width: parent.width
+                        label: "GPU Renderer (clear to inherit)"
+                        enabled: gpuPresetCombo.currentIndex !== 0
+                    }
+
+                    // Screen Resolution
+                    Column {
+                        width: parent.width
+                        spacing: 8
+                        Text { text: "Screen"; color: Theme.muted; font.pixelSize: 13; font.bold: true }
+                        Row {
+                            width: parent.width
+                            spacing: 10
+                            DarkComboBox {
+                                id: screenResCombo
+                                width: 200; height: 36
+                                textRole: "name"
+                                model: screenResModel
+                                onActivated: function(index) {
+                                    // 0 = Inherit, 1 = Custom, 2+ = concrete preset
+                                    if (index === 1) {
+                                        // Custom: clear so user can type
+                                        editorScreenWidth.text = ""
+                                        editorScreenHeight.text = ""
+                                    } else {
+                                        var item = screenResModel.get(index)
+                                        if (item.width > 0) {
+                                            editorScreenWidth.text = String(item.width)
+                                            editorScreenHeight.text = String(item.height)
+                                        } else {
+                                            // Inherit: clear
+                                            editorScreenWidth.text = ""
+                                            editorScreenHeight.text = ""
+                                        }
+                                    }
+                                }
+                            }
+                            TextField {
+                                id: editorScreenWidth
+                                width: 80; height: 36
+                                color: Theme.text; font.pixelSize: 13
+                                // Custom only; Inherit and presets are read-only
+                                readOnly: screenResCombo.currentIndex !== 1
+                                enabled: screenResCombo.currentIndex === 1
+                                placeholderText: "Width"; placeholderTextColor: Theme.dim
+                                background: Rectangle { radius: 9; color: Theme.subtle; border.color: Theme.border }
+                            }
+                            TextField {
+                                id: editorScreenHeight
+                                width: 80; height: 36
+                                color: Theme.text; font.pixelSize: 13
+                                readOnly: screenResCombo.currentIndex !== 1
+                                enabled: screenResCombo.currentIndex === 1
+                                placeholderText: "Height"; placeholderTextColor: Theme.dim
+                                background: Rectangle { radius: 9; color: Theme.subtle; border.color: Theme.border }
+                            }
+                        }
+                    }
+                }
+
+                // Launch Args (CloakBrowser only)
+                Column {
+                    id: launchArgsSection
+                    width: parent.width
+                    spacing: 8
+                    visible: false
+                    Text { text: "Launch Args (CloakBrowser only, one per line)"; color: Theme.text; font.pixelSize: 13; font.bold: true }
+                    Rectangle {
+                        width: parent.width; height: 80; radius: 11; color: Theme.subtle; border.color: Theme.border
+                        TextArea {
+                            id: launchArgsField
+                            anchors.fill: parent; anchors.margins: 10
+                            color: Theme.text; font.pixelSize: 13; background: Item {}
+                            placeholderText: "--disable-blink-features=AutomationControlled"
+                            placeholderTextColor: Theme.dim; wrapMode: TextArea.Wrap
+                        }
+                    }
+                }
+
+                // Fingerprint Seed (CloakBrowser only)
+                Row {
+                    id: fingerprintSeedSection
+                    width: parent.width
+                    visible: false
+                    spacing: 10
+                    FormField { id: editorFpSeed; width: parent.width - 120; label: "Fingerprint Seed" }
+                    PrimaryButton { width: 100; height: 40; text: "Random"; icon: "refresh"; onClicked: root.generateSeed() }
+                }
+
+                // Notes
+                Column {
+                    width: parent.width
+                    spacing: 8
+                    Text { text: "Notes"; color: Theme.text; font.pixelSize: 13; font.bold: true }
+                    Rectangle {
+                        width: parent.width; height: 70; radius: 11; color: Theme.subtle; border.color: Theme.border
+                        TextArea {
+                            id: editorNotes
+                            anchors.fill: parent; anchors.margins: 10
+                            color: Theme.text; font.pixelSize: 13; background: Item {}
+                            placeholderText: "Profile notes..."; placeholderTextColor: Theme.dim; wrapMode: TextArea.Wrap
+                        }
+                    }
+                }
+
+                // --- Buttons ---
                 Row {
                     spacing: 12
                     PrimaryButton {
@@ -348,7 +805,7 @@ Flickable {
                         text: "Save"
                         icon: "save"
                         onClicked: {
-                            profilesBridge.saveProfile(root.editingProfile, editName.text, editStage.text, editProxyHost.text, editProxyPort.text, editProxyUser.text, editProxyPassword.text, browserSettingsBridge.engine, editLocale.text, editTimezone.text, editUserAgent.text, editWebgl.text, editCpu.text)
+                            profilesBridge.saveProfileData(root.editingProfile, root.collectProfileData())
                             profileDialog.close()
                         }
                     }
@@ -357,6 +814,20 @@ Flickable {
                     PrimaryButton { width: 110; text: "Cancel"; secondary: true; onClicked: profileDialog.close() }
                 }
             }
+        }
+        onOpened: {
+            var resPresets = JSON.parse(profilesBridge.getScreenResolutionPresets())
+            screenResModel.clear()
+            screenResModel.append({ name: "Inherit", width: 0, height: 0 })
+            screenResModel.append({ name: "Custom", width: 0, height: 0 })
+            for (var i = 0; i < resPresets.length; i++)
+                screenResModel.append(resPresets[i])
+            var gpuPresets = JSON.parse(profilesBridge.getGpuPresets())
+            gpuPresetModel.clear()
+            gpuPresetModel.append({ name: "Inherit" })
+            gpuPresetModel.append({ name: "Custom" })
+            for (var j = 0; j < gpuPresets.length; j++)
+                gpuPresetModel.append({ name: gpuPresets[j].name })
         }
     }
 
@@ -445,7 +916,7 @@ Flickable {
                 ListView {
                     Layout.preferredWidth: 330
                     Layout.fillHeight: true
-                    model: settingsBridge.variablesModel
+                    model: settingsBridge ? settingsBridge.variablesModel : null
                     spacing: 8
                     clip: true
                     delegate: Rectangle {

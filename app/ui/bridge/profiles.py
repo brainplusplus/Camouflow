@@ -10,14 +10,16 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
-from PyQt6.QtCore import QObject, QTimer, pyqtProperty, pyqtSignal, pyqtSlot
+from PyQt6.QtCore import QObject, pyqtProperty, pyqtSignal, pyqtSlot
 
 from app.core.browser_interface import BrowserInterface
 from app.storage.db import (
     db_add_account,
     db_delete_account,
     db_get_accounts,
+    db_get_all_tags,
     db_get_setting,
+    db_resolve_tag_color,
     db_set_setting,
     db_update_account,
     profile_dir_for_email,
@@ -32,16 +34,21 @@ class ProfilesBridge(QObject):
     modelChanged = pyqtSignal()
     countsChanged = pyqtSignal()
     message = pyqtSignal(str)
+    _uiCall = pyqtSignal(object)  # thread-safe signal to run callables on the main Qt thread
 
     def __init__(self, app_state=None, parent=None) -> None:
         super().__init__(parent)
+        self._uiCall.connect(self._runUiCall)
         self._model = DictListModel([
-            "name", "id", "browser", "proxy", "lastActive", "status", "stage", "tags", "running"
+            "name", "id", "browser", "proxy", "lastActive", "status", "stage", "tags", "tagsList", "running"
         ], parent=self)
         self._stages_model = DictListModel(["name", "count", "selected"], parent=self)
+        self._proxy_pools_model = DictListModel(["name"], parent=self)
+        self._available_tags_model = DictListModel(["name", "color"], parent=self)
         self._selected_stage = ""
         self._live_browsers: Dict[str, BrowserInterface] = {}
         self._app_state = app_state
+        self._proxy_lock = threading.Lock()
         if app_state is not None:
             app_state.refreshRequested.connect(self.refresh)
         self.refresh()
@@ -53,6 +60,14 @@ class ProfilesBridge(QObject):
     @pyqtProperty(QObject, constant=True)
     def stagesModel(self) -> QObject:  # noqa: N802
         return self._stages_model
+
+    @pyqtProperty(QObject, constant=True)
+    def proxyPoolsModel(self) -> QObject:  # noqa: N802
+        return self._proxy_pools_model
+
+    @pyqtProperty(QObject, constant=True)
+    def availableTagsModel(self) -> QObject:  # noqa: N802
+        return self._available_tags_model
 
     @pyqtProperty(str, notify=modelChanged)
     def selectedStage(self) -> str:  # noqa: N802
@@ -69,17 +84,34 @@ class ProfilesBridge(QObject):
     def live_browsers(self) -> Dict[str, BrowserInterface]:
         return self._live_browsers
 
+    def _runUiCall(self, func: object) -> None:
+        if callable(func):
+            try:
+                func()
+            except Exception:
+                LOGGER.exception("UI dispatch failed")
+
+    def _invoke_ui(self, func) -> None:
+        """Run *func* on the main Qt thread (safe from any thread)."""
+        self._uiCall.emit(func)
+
     def _emit_message(self, text: str) -> None:
         self.message.emit(text)
         if self._app_state is not None:
             self._app_state.notify(text)
 
     def _proxy_label(self, acc: Dict[str, Any]) -> str:
+        mode = str(acc.get("proxy_mode") or "none")
+        if mode == "none":
+            return "None"
+        if mode == "random":
+            pool = str(acc.get("proxy_pool") or "").strip()
+            return f"Random: {pool}" if pool else "Random"
         host = str(acc.get("proxy_host") or "")
         port = acc.get("proxy_port")
         if host and port:
             return f"{host}:{port}"
-        return str(acc.get("proxy_pool") or "None")
+        return str(acc.get("proxy_pool") or "Manual")
 
     @staticmethod
     def _settings_dict(value: Any) -> Optional[Dict[str, Any]]:
@@ -172,9 +204,19 @@ class ProfilesBridge(QObject):
     def refresh(self) -> None:
         rows: List[Dict[str, Any]] = []
         accounts = db_get_accounts()
-        stage_counts: Dict[str, int] = {}
+        tag_counts: Dict[str, int] = {}
+        all_tags: set[str] = set()
         for acc in accounts:
-            stage_counts[str(acc.get("stage") or "No tag")] = stage_counts.get(str(acc.get("stage") or "No tag"), 0) + 1
+            acc_tags = acc.get("tags") or []
+            if not acc_tags:
+                legacy = str(acc.get("stage") or "").strip()
+                if legacy:
+                    acc_tags = [legacy]
+            for t in acc_tags:
+                t = str(t).strip()
+                if t:
+                    tag_counts[t] = tag_counts.get(t, 0) + 1
+                    all_tags.add(t)
         try:
             configured_stages = json.loads(db_get_setting("stages_json") or "[]")
         except Exception:
@@ -182,29 +224,47 @@ class ProfilesBridge(QObject):
         for stage in configured_stages if isinstance(configured_stages, list) else []:
             clean_stage = str(stage or "").strip()
             if clean_stage:
-                stage_counts.setdefault(clean_stage, 0)
+                tag_counts.setdefault(clean_stage, 0)
+                all_tags.add(clean_stage)
+
         self._stages_model.set_rows(
             [{"name": "All tags", "count": len(accounts), "selected": not self._selected_stage}]
             + [
-                {"name": stage, "count": count, "selected": self._selected_stage == stage}
-                for stage, count in sorted(stage_counts.items(), key=lambda item: item[0].lower())
+                {"name": tag, "count": count, "selected": self._selected_stage == tag}
+                for tag, count in sorted(tag_counts.items(), key=lambda item: item[0].lower())
             ]
         )
-        sorted_accounts = sorted(accounts, key=lambda a: (str(a.get("stage") or "No tag").lower(), str(a.get("name") or "").lower()))
+
+        self._available_tags_model.set_rows([
+            {"name": t, "color": db_resolve_tag_color(t)}
+            for t in sorted(all_tags)
+        ])
+
+        # Populate proxy pools model
+        pool_names: List[str] = []
+        try:
+            pools = json.loads(db_get_setting("proxy_pools") or "{}")
+            if isinstance(pools, dict):
+                pool_names = sorted(pools.keys())
+        except Exception:
+            pass
+        self._proxy_pools_model.set_rows([{"name": p} for p in pool_names])
+
+        sorted_accounts = sorted(accounts, key=lambda a: (
+            ",".join(a.get("tags") or ["~"]).lower(),
+            str(a.get("name") or "").lower(),
+        ))
         for index, acc in enumerate(sorted_accounts, start=1):
             name = str(acc.get("name") or f"profile{index}")
-            stage = str(acc.get("stage") or "")
-            stage_label = stage or "No tag"
-            if self._selected_stage and self._selected_stage != stage_label:
+            acc_tags: List[str] = [str(t).strip() for t in (acc.get("tags") or []) if str(t).strip()]
+            if not acc_tags:
+                legacy = str(acc.get("stage") or "").strip()
+                if legacy:
+                    acc_tags = [legacy]
+            primary_tag = acc_tags[0] if acc_tags else "No tag"
+            if self._selected_stage and self._selected_stage != primary_tag:
                 continue
             running = name in self._live_browsers
-            tags = []
-            if stage:
-                tags.append(stage)
-            for key in ("tag", "type"):
-                val = str(acc.get(key) or "")
-                if val and val not in tags:
-                    tags.append(val)
             engine = str(acc.get("_browser_engine") or acc.get("browser_engine") or "camoufox")
             if engine == "cloakbrowser":
                 browser_label = "CloakBrowser"
@@ -217,8 +277,9 @@ class ProfilesBridge(QObject):
                 "proxy": self._proxy_label(acc),
                 "lastActive": str(acc.get("last_active") or "now" if running else acc.get("last_active") or "idle"),
                 "status": "Running" if running else "Stopped",
-                "stage": stage or "No tag",
-                "tags": "  ".join(f"#{tag}" for tag in tags) if tags else "#profile",
+                "stage": primary_tag,
+                "tags": "  ".join(f"#{tag}" for tag in acc_tags) if acc_tags else "#profile",
+                "tagsList": acc_tags,
                 "running": running,
             })
         self._model.set_rows(rows)
@@ -232,6 +293,23 @@ class ProfilesBridge(QObject):
             stage = ""
         self._selected_stage = stage
         self.refresh()
+
+    @pyqtSlot(result=str)
+    def getGpuPresets(self) -> str:  # noqa: N802
+        """Return JSON of GPU presets for the editor dropdown."""
+        from app.storage.db import GPU_PRESETS
+        return json.dumps([{ "name": k, "vendor": v["vendor"], "renderer": v["renderer"] } for k, v in GPU_PRESETS.items()], ensure_ascii=False)
+
+    @pyqtSlot(result=str)
+    def getScreenResolutionPresets(self) -> str:  # noqa: N802
+        """Return JSON of screen resolution presets for the editor dropdown."""
+        from app.storage.db import SCREEN_RESOLUTION_PRESETS
+        return json.dumps([{ "name": k, "width": v["width"], "height": v["height"] } for k, v in SCREEN_RESOLUTION_PRESETS.items()], ensure_ascii=False)
+
+    @pyqtSlot(result=str)
+    def getAllTags(self) -> str:  # noqa: N802
+        """Return JSON list of all known tags for the multi-select."""
+        return json.dumps(db_get_all_tags(), ensure_ascii=False)
 
     @pyqtSlot()
     def createProfile(self) -> None:  # noqa: N802
@@ -314,6 +392,261 @@ class ProfilesBridge(QObject):
             "webgl_vendor": str(settings.get("webgl_vendor") or settings.get("gpu_vendor") or ""),
             "hardware_concurrency": "" if settings.get("hardware_concurrency") in (None, "", 0) else str(settings.get("hardware_concurrency")),
         }
+
+    @pyqtSlot(str, result="QVariantMap")
+    def getProfileData(self, name: str) -> Dict[str, Any]:  # noqa: N802
+        """Load a full profile as a QVariantMap for the editor, including browser_overrides."""
+        target = str(name or "").strip()
+        acc = next((item for item in db_get_accounts() if str(item.get("name") or "") == target), None)
+        if not acc:
+            return {}
+        engine = str(acc.get("_browser_engine") or acc.get("browser_engine") or "camoufox").lower()
+
+        # Migrate legacy per-engine settings into browser_overrides if needed
+        overrides: Dict[str, Any] = dict(acc.get("browser_overrides") or {})
+        if not overrides:
+            settings_key = "cloakbrowser_settings" if engine == "cloakbrowser" else "camoufox_settings"
+            legacy = acc.get(settings_key)
+            if isinstance(legacy, str):
+                try:
+                    legacy = json.loads(legacy)
+                except Exception:
+                    legacy = {}
+            if isinstance(legacy, dict):
+                overrides["locale"] = str(legacy.get("locale") or "")
+                overrides["timezone"] = str(legacy.get("timezone") or "")
+                overrides["user_agent"] = str(legacy.get("user_agent") or "")
+                overrides["gpu_vendor"] = str(legacy.get("gpu_vendor") or legacy.get("webgl_vendor") or "")
+                overrides["gpu_renderer"] = str(legacy.get("gpu_renderer") or "")
+                overrides["hardware_concurrency"] = legacy.get("hardware_concurrency") or 0
+                overrides["platform"] = str(legacy.get("platform") or "")
+                overrides["humanize"] = bool(legacy.get("humanize", False))
+                overrides["human_preset"] = str(legacy.get("human_preset") or "default")
+                overrides["geoip"] = bool(legacy.get("geoip", False))
+                overrides["screen_width"] = legacy.get("screen_width") or 0
+                overrides["screen_height"] = legacy.get("screen_height") or 0
+                overrides["launch_args"] = legacy.get("launch_args") or []
+                overrides["fingerprint_seed"] = legacy.get("fingerprint_seed") or 0
+                overrides["color_scheme"] = str(legacy.get("color_scheme") or "")
+
+        acc_tags = acc.get("tags") or []
+        if not acc_tags:
+            legacy_stage = str(acc.get("stage") or "").strip()
+            if legacy_stage:
+                acc_tags = [legacy_stage]
+
+        return {
+            "name": str(acc.get("name") or ""),
+            "engine": engine,
+            "tags": [str(t) for t in acc_tags],
+            "notes": str(acc.get("notes") or ""),
+            "proxy_mode": str(acc.get("proxy_mode") or "none"),
+            "proxy_pool": str(acc.get("proxy_pool") or ""),
+            "proxy_host": str(acc.get("proxy_host") or ""),
+            "proxy_port": "" if acc.get("proxy_port") in (None, "") else str(acc.get("proxy_port")),
+            "proxy_user": str(acc.get("proxy_user") or ""),
+            "proxy_password": str(acc.get("proxy_password") or ""),
+            "proxy_scheme": str(acc.get("proxy_scheme") or "socks5"),
+            "overrides": {
+                "locale": str(overrides.get("locale") or ""),
+                "timezone": str(overrides.get("timezone") or ""),
+                "user_agent": str(overrides.get("user_agent") or ""),
+                "gpu_vendor": str(overrides.get("gpu_vendor") or ""),
+                "gpu_renderer": str(overrides.get("gpu_renderer") or ""),
+                "hardware_concurrency": int(overrides.get("hardware_concurrency") or 0),
+                "platform": str(overrides.get("platform") or ""),
+                "humanize": bool(overrides.get("humanize", False)),
+                "human_preset": str(overrides.get("human_preset") or "default"),
+                "geoip": bool(overrides.get("geoip", False)),
+                "screen_width": int(overrides.get("screen_width") or 0),
+                "screen_height": int(overrides.get("screen_height") or 0),
+                "launch_args": list(overrides.get("launch_args") or []),
+                "fingerprint_seed": int(overrides.get("fingerprint_seed") or 0),
+                "color_scheme": str(overrides.get("color_scheme") or ""),
+            },
+        }
+
+    @pyqtSlot(str, "QVariantMap")
+    def saveProfileData(self, original_name: str, data: Dict[str, Any]) -> None:  # noqa: N802
+        """Save a full profile from a QVariantMap."""
+        original_name = str(original_name or "").strip()
+        if not original_name:
+            self._emit_message("Profile name is required")
+            return
+        data = data or {}
+        clean_name = str(data.get("name") or "").strip()
+        if not clean_name:
+            self._emit_message("Profile name is required")
+            return
+
+        updates: Dict[str, Any] = {
+            "name": clean_name,
+            "_browser_engine": str(data.get("engine") or "camoufox").lower(),
+            "notes": str(data.get("notes") or ""),
+            "proxy_mode": str(data.get("proxy_mode") or "none"),
+            "proxy_pool": str(data.get("proxy_pool") or ""),
+            "proxy_host": str(data.get("proxy_host") or "").strip(),
+            "proxy_user": str(data.get("proxy_user") or "").strip(),
+            "proxy_password": str(data.get("proxy_password") or "").strip(),
+            "proxy_scheme": str(data.get("proxy_scheme") or "socks5").strip() or "socks5",
+        }
+
+        # Tags
+        raw_tags = data.get("tags")
+        if isinstance(raw_tags, list):
+            updates["tags"] = [str(t).strip() for t in raw_tags if str(t).strip()]
+        else:
+            updates["tags"] = []
+
+        # Proxy port
+        port_text = str(data.get("proxy_port") or "").strip()
+        if port_text:
+            try:
+                updates["proxy_port"] = int(port_text)
+            except Exception:
+                self._emit_message("Proxy port must be a number")
+                return
+        else:
+            updates["proxy_port"] = None
+
+        # If proxy mode is none, clear proxy fields
+        if updates["proxy_mode"] == "none":
+            updates["proxy_host"] = ""
+            updates["proxy_port"] = None
+            updates["proxy_user"] = ""
+            updates["proxy_password"] = ""
+            updates["proxy_pool"] = ""
+
+        # If proxy mode is random, clear manual fields
+        if updates["proxy_mode"] == "random":
+            updates["proxy_host"] = ""
+            updates["proxy_port"] = None
+            updates["proxy_user"] = ""
+            updates["proxy_password"] = ""
+
+        # Browser overrides
+        raw_overrides = data.get("overrides") or {}
+        if not isinstance(raw_overrides, dict):
+            raw_overrides = {}
+        overrides: Dict[str, Any] = {}
+        for key in ("locale", "timezone", "user_agent", "gpu_vendor", "gpu_renderer", "platform", "human_preset", "color_scheme"):
+            val = str(raw_overrides.get(key) or "").strip()
+            if val:
+                overrides[key] = val
+        for key in ("humanize", "geoip"):
+            overrides[key] = bool(raw_overrides.get(key, False))
+        hc = raw_overrides.get("hardware_concurrency")
+        if hc not in (None, "", 0, "0"):
+            try:
+                overrides["hardware_concurrency"] = int(hc)
+            except Exception:
+                pass
+        for key in ("screen_width", "screen_height", "fingerprint_seed"):
+            val = raw_overrides.get(key)
+            if val not in (None, "", 0, "0"):
+                try:
+                    overrides[key] = int(val)
+                except Exception:
+                    pass
+        la = raw_overrides.get("launch_args")
+        if isinstance(la, list):
+            overrides["launch_args"] = [str(a).strip() for a in la if str(a).strip()]
+
+        updates["browser_overrides"] = overrides
+        # Clear legacy per-engine settings dicts
+        updates["__delete_keys__"] = ["camoufox_settings", "cloakbrowser_settings"]
+
+        try:
+            db_update_account(original_name, updates)
+        except Exception as exc:
+            self._emit_message(f"Cannot save profile: {exc}")
+            return
+        self._emit_message(f"Profile {clean_name} saved")
+        self.refresh()
+
+    @pyqtSlot(str, result=str)
+    def getProxiesForPool(self, pool_name: str) -> str:  # noqa: N802
+        """Return JSON list of proxy entries in a pool for the fixed-mode dropdown."""
+        pool_name = str(pool_name or "").strip()
+        if not pool_name:
+            return "[]"
+        try:
+            pools = json.loads(db_get_setting("proxy_pools") or "{}")
+        except Exception:
+            pools = {}
+        pool = pools.get(pool_name) if isinstance(pools, dict) else None
+        proxies = pool.get("proxies", []) if isinstance(pool, dict) else []
+        items = []
+        for idx, entry in enumerate(proxies):
+            if not isinstance(entry, dict):
+                continue
+            value = str(entry.get("value") or "")
+            assigned = str(entry.get("assigned_to") or "")
+            items.append({"index": idx, "value": value, "label": value, "assigned": assigned})
+        return json.dumps(items, ensure_ascii=False)
+
+    @pyqtSlot(str, str, result="QVariantMap")
+    def getProxyFromPool(self, pool_name: str, index: str) -> Dict[str, Any]:  # noqa: N802
+        """Return parsed proxy fields for a specific pool entry (for fixed mode)."""
+        pool_name = str(pool_name or "").strip()
+        try:
+            idx = int(index)
+        except Exception:
+            return {}
+        try:
+            pools = json.loads(db_get_setting("proxy_pools") or "{}")
+        except Exception:
+            pools = {}
+        pool = pools.get(pool_name) if isinstance(pools, dict) else None
+        proxies = pool.get("proxies", []) if isinstance(pool, dict) else []
+        if not (0 <= idx < len(proxies)) or not isinstance(proxies[idx], dict):
+            return {}
+        value = str(proxies[idx].get("value") or "")
+        details = self._parse_proxy_value(value)
+        if not details:
+            details = {"proxy_scheme": "socks5", "proxy_host": "", "proxy_port": "", "proxy_user": "", "proxy_password": ""}
+        details["proxy_pool"] = pool_name
+        return details
+
+    def _checkout_random_proxy(self, pool_name: str, profile_name: str) -> Optional[str]:
+        """Atomically checkout an unassigned proxy from a pool. Returns proxy string or None."""
+        with self._proxy_lock:
+            try:
+                pools = json.loads(db_get_setting("proxy_pools") or "{}")
+            except Exception:
+                pools = {}
+            pool = pools.get(pool_name) if isinstance(pools, dict) else None
+            proxies = pool.get("proxies", []) if isinstance(pool, dict) else []
+            for entry in proxies:
+                if not isinstance(entry, dict):
+                    continue
+                if str(entry.get("assigned_to") or "").strip():
+                    continue
+                value = str(entry.get("value") or "").strip()
+                if not value:
+                    continue
+                entry["assigned_to"] = profile_name
+                db_set_setting("proxy_pools", json.dumps(pools, ensure_ascii=False))
+                return value
+            return None
+
+    def _release_proxy(self, profile_name: str) -> None:
+        """Release any proxy checked out by this profile."""
+        with self._proxy_lock:
+            try:
+                pools = json.loads(db_get_setting("proxy_pools") or "{}")
+            except Exception:
+                pools = {}
+            changed = False
+            for pool in pools.values():
+                if not isinstance(pool, dict):
+                    continue
+                for entry in pool.get("proxies", []):
+                    if isinstance(entry, dict) and str(entry.get("assigned_to") or "").strip() == profile_name:
+                        entry["assigned_to"] = ""
+                        changed = True
+            if changed:
+                db_set_setting("proxy_pools", json.dumps(pools, ensure_ascii=False))
 
     @pyqtSlot(str, result=str)
     def getProfileVariables(self, name: str) -> str:  # noqa: N802
@@ -516,10 +849,10 @@ class ProfilesBridge(QObject):
                     await browser.close(force=True)
 
                 loop.run_until_complete(run())
-                QTimer.singleShot(0, lambda: self._emit_message(f"Cookies saved for {target}"))
+                self._invoke_ui(lambda: self._emit_message(f"Cookies saved for {target}"))
             except Exception as exc:
                 LOGGER.exception("Cannot save cookies for %s", target)
-                QTimer.singleShot(0, lambda exc=exc: self._emit_message(f"Cannot save cookies: {exc}"))
+                self._invoke_ui(lambda exc=exc: self._emit_message(f"Cannot save cookies: {exc}"))
             finally:
                 try:
                     loop.close()
@@ -618,9 +951,37 @@ class ProfilesBridge(QObject):
         if not acc:
             self._emit_message(f"Profile {name} not found")
             return
-        proxy = self._proxy_for(acc)
         engine = str(acc.get("_browser_engine") or acc.get("browser_engine") or "camoufox")
+
+        # --- Resolve proxy based on proxy_mode ---
+        proxy_mode = str(acc.get("proxy_mode") or "none")
+        proxy = ""
+        if proxy_mode == "manual":
+            proxy = self._proxy_for(acc)
+        elif proxy_mode == "fixed":
+            proxy = self._proxy_for(acc)
+        elif proxy_mode == "random":
+            pool = str(acc.get("proxy_pool") or "").strip()
+            if pool:
+                checked_out = self._checkout_random_proxy(pool, name)
+                if not checked_out:
+                    self._emit_message(f"No available proxies in pool {pool}")
+                    return
+                proxy = checked_out
+            else:
+                self._emit_message("No proxy pool configured for random mode")
+                return
+
+        # --- Get browser_overrides as settings ---
+        overrides = acc.get("browser_overrides")
+        if not isinstance(overrides, dict):
+            overrides = {}
         settings = self._settings_dict(acc.get("cloakbrowser_settings") if engine == "cloakbrowser" else acc.get("camoufox_settings"))
+        if settings is None:
+            settings = {}
+        # Merge browser_overrides on top of legacy settings
+        settings = {**settings, **overrides}
+
         browser = BrowserInterface(
             profile_name=name,
             proxy=proxy,
@@ -628,7 +989,7 @@ class ProfilesBridge(QObject):
             browser_engine=engine,
             browser_settings=settings,
         )
-        browser.add_close_callback(lambda: QTimer.singleShot(0, lambda: self._on_browser_closed(name, browser)))
+        browser.add_close_callback(lambda: self._invoke_ui(lambda: self._on_browser_closed(name, browser)))
         self._live_browsers[name] = browser
         self._emit_message(f"Starting browser for {name}")
         self.refresh()
@@ -636,16 +997,70 @@ class ProfilesBridge(QObject):
         def worker() -> None:
             loop = asyncio.new_event_loop()
             asyncio.set_event_loop(loop)
+            # Keep a reference so stopProfile can request shutdown from outside
+            browser._stop_requested = False
+
+            async def _run_and_keep_alive() -> None:
+                try:
+                    await browser.start()
+                except Exception as exc:
+                    LOGGER.exception("Browser start failed for %s", name)
+                    self._invoke_ui(lambda exc=exc: self._on_browser_failed(name, browser, exc))
+                    return
+
+                ping_counter = 0
+                while not getattr(browser, "_closed_notified", False):
+                    if getattr(browser, "_stop_requested", False):
+                        break
+                    await asyncio.sleep(0.5)
+                    ping_counter += 1
+                    if ping_counter < 6:
+                        continue
+                    ping_counter = 0
+                    page = getattr(browser, "page", None)
+                    if page is None:
+                        break
+                    try:
+                        if getattr(page, "is_closed", None) and page.is_closed():
+                            break
+                        await page.evaluate("1")
+                    except Exception as exc:
+                        message = str(exc).lower()
+                        transient = any(
+                            token in message
+                            for token in (
+                                "execution context was destroyed",
+                                "most likely because of a navigation",
+                                "frame was detached",
+                                "navigation",
+                            )
+                        )
+                        if transient:
+                            continue
+                        LOGGER.info("Browser keep-alive ping failed for %s: %s", name, exc)
+                        break
+
+                try:
+                    await browser.close(force=True)
+                except Exception:
+                    LOGGER.exception("Failed to close browser for %s", name)
+
             try:
-                loop.run_until_complete(browser.start())
-            except Exception as exc:
-                LOGGER.exception("Browser start failed for %s", name)
-                QTimer.singleShot(0, lambda exc=exc: self._on_browser_failed(name, browser, exc))
+                loop.run_until_complete(_run_and_keep_alive())
             finally:
                 try:
-                    loop.close()
+                    pending = asyncio.all_tasks(loop)
+                    for task in pending:
+                        task.cancel()
+                    if pending:
+                        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
                 except Exception:
                     pass
+                try:
+                    loop.run_until_complete(loop.shutdown_asyncgens())
+                except Exception:
+                    pass
+                loop.close()
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -670,29 +1085,20 @@ class ProfilesBridge(QObject):
     def _on_browser_closed(self, name: str, browser: BrowserInterface) -> None:
         if self._live_browsers.get(name) is browser:
             self._live_browsers.pop(name, None)
+        self._release_proxy(name)
         self._emit_message(f"Browser closed for {name}")
         self.refresh()
 
     @pyqtSlot(str)
     def stopProfile(self, name: str) -> None:  # noqa: N802
         name = str(name or "").strip()
-        browser = self._live_browsers.pop(name, None)
+        browser = self._live_browsers.get(name)
         if browser is None:
             self.refresh()
             return
 
-        def worker() -> None:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-            try:
-                loop.run_until_complete(browser.close(force=True))
-            except Exception:
-                LOGGER.exception("Browser stop failed for %s", name)
-            finally:
-                loop.close()
-                QTimer.singleShot(0, self.refresh)
-
-        threading.Thread(target=worker, daemon=True).start()
+        # Signal the keep-alive loop to break and close the browser gracefully
+        browser._stop_requested = True
         self._emit_message(f"Stopping browser for {name}")
         self.refresh()
 

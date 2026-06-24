@@ -139,6 +139,26 @@ class ProxyPoolMixin:
             ctx = ssl.create_default_context()
             return ctx.wrap_socket(sock_obj, server_hostname=server_hostname)
 
+        def _read_connect_response(sock_obj: socket.socket) -> Tuple[Optional[int], str]:
+            """Read only the status line + headers of a CONNECT reply.
+
+            Unlike a normal HTTP response, a CONNECT tunnel has no body - after
+            the blank line the socket is a raw tunnel. Reading further would
+            block until timeout, which is the root cause of the 'failed' results.
+            """
+            head = _recv_until(sock_obj, b"\r\n\r\n", 256 * 1024)
+            if b"\r\n\r\n" not in head:
+                return None, "invalid CONNECT response"
+            header_raw = head.split(b"\r\n\r\n", 1)[0]
+            lines = header_raw.split(b"\r\n")
+            if not lines:
+                return None, "empty CONNECT response"
+            first = lines[0].decode("iso-8859-1", errors="replace").strip()
+            match = re.match(r"^HTTP/\d\.\d\s+(\d{3})\b", first)
+            if not match:
+                return None, f"invalid CONNECT response: {first[:120]}"
+            return int(match.group(1)), ""
+
         def _proxy_connect_http(
             proxy_host: str,
             proxy_port: int,
@@ -161,12 +181,11 @@ class ProxyPoolMixin:
                 f"CONNECT {target_host}:{target_port} HTTP/1.1\r\n"
                 f"Host: {target_host}:{target_port}\r\n"
                 f"{auth_line}"
-                "Connection: close\r\n"
                 "\r\n"
             )
             try:
                 sock_obj.sendall(req.encode("iso-8859-1", errors="replace"))
-                status, _, _, err = _read_http_response(sock_obj)
+                status, err = _read_connect_response(sock_obj)
             except OSError as exc:
                 try:
                     sock_obj.close()
@@ -353,7 +372,11 @@ class ProxyPoolMixin:
                     if isinstance(last_check, dict):
                         proxy_entry["last_check"] = last_check
                     proxies.append(proxy_entry)
-            normalized[str(name)] = {"proxies": proxies}
+            normalized_entry: Dict[str, object] = {"proxies": proxies}
+            derived_mode = payload.get("_derived_mode")
+            if isinstance(derived_mode, str) and derived_mode:
+                normalized_entry["_derived_mode"] = derived_mode
+            normalized[str(name)] = normalized_entry
         self.proxy_pools = normalized
         self._refresh_proxy_pool_views()
 
@@ -832,6 +855,10 @@ class ProxyPoolMixin:
             QMessageBox.warning(self, "Proxy error", f"{exc}\nValue:\n{proxy_value}")
             self._release_proxy_for_account(account_name)
             return False
+        # Preserve scheme from the proxy value so scenario runner uses correct protocol
+        scheme = "socks5"
+        if "://" in proxy_value:
+            scheme = proxy_value.split("://", 1)[0].strip().lower() or "socks5"
         db_update_account(
             account_name,
             {
@@ -839,6 +866,7 @@ class ProxyPoolMixin:
                 "proxy_port": port,
                 "proxy_user": user,
                 "proxy_password": password,
+                "proxy_scheme": scheme,
                 "proxy_pool": pool_name,
                 "proxy_pool_value": proxy_value,
             },

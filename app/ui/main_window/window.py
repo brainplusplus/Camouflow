@@ -174,15 +174,15 @@ class MainWindow(
             return
         self._initial_maximize_scheduled = True
 
-        def try_maximize() -> None:
-            if not self.isMaximized():
-                self.setWindowState(self.windowState() | Qt.WindowState.WindowMaximized)
-                self.showMaximized()
+        def try_fullscreen() -> None:
+            if not self.isFullScreen():
+                self.setWindowState(self.windowState() | Qt.WindowState.WindowFullScreen)
+                self.showFullScreen()
             self.raise_()
             self.activateWindow()
 
-        QTimer.singleShot(0, try_maximize)
-        QTimer.singleShot(150, try_maximize)
+        QTimer.singleShot(0, try_fullscreen)
+        QTimer.singleShot(150, try_fullscreen)
 
     def _build_sidebar(self, nav_items: List[Tuple[str, int, str]]) -> QWidget:
         sidebar = QFrame()
@@ -1484,7 +1484,7 @@ class MainWindow(
         db_set_setting("account_parse_template", tmpl)
 
     def _expand_to_screen(self) -> None:
-        self.showMaximized()
+        self.showFullScreen()
 
     def _on_tab_changed(self, index: int) -> None:
         self._update_nav_state(index)

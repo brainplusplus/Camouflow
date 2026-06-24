@@ -232,6 +232,22 @@ class BrowserInterface:
         merged = dict(self._camoufox_defaults or {})
         merged.update({k: v for k, v in (self._camoufox_settings or {}).items() if v is not None})
 
+        # --- Translate unified browser_overrides keys to Camoufox-expected keys ---
+        if merged.get("gpu_vendor") and not merged.get("webgl_vendor"):
+            merged["webgl_vendor"] = merged["gpu_vendor"]
+        if merged.get("gpu_renderer") and not merged.get("webgl_renderer"):
+            merged["webgl_renderer"] = merged["gpu_renderer"]
+        platform_val = str(merged.get("platform") or "").strip().lower()
+        if platform_val and not merged.get("os"):
+            platform_map = {"windows": "windows", "linux": "linux", "mac": "macos", "macos": "macos"}
+            merged["os"] = [platform_map.get(platform_val, platform_val)]
+        sw = merged.get("screen_width")
+        sh = merged.get("screen_height")
+        if sw and not merged.get("window_width"):
+            merged["window_width"] = sw
+        if sh and not merged.get("window_height"):
+            merged["window_height"] = sh
+
         def _split_list(value) -> List[str]:
             if isinstance(value, str):
                 parts = []
@@ -1105,29 +1121,56 @@ class BrowserInterface:
             return
 
         self.logger.info("Closing %s resources for %s", self.browser_engine, self.profile_name)
-        try:
-            if self.page:
-                await self.page.close()
-            if self.context:
-                await self.context.close()
-        finally:
-            if self._camoufox_ctx:
-                await self._camoufox_ctx.__aexit__(None, None, None)
+
+        # If the browser process already exited, the Playwright connection is dead.
+        # Skip all Playwright calls to avoid cascading errors on dead channels.
+        already_dead = self._process_exited_notified
+
+        if not already_dead:
+            try:
+                if self.page:
+                    try:
+                        await self.page.close()
+                    except Exception:
+                        pass
+                if self.context:
+                    try:
+                        await self.context.close()
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        self.page = None
+        self.context = None
+        self.browser = None
+
+        if self._camoufox_ctx:
+            try:
+                if not already_dead:
+                    await self._camoufox_ctx.__aexit__(None, None, None)
+            except Exception:
+                pass
+            finally:
                 self._camoufox_ctx = None
-            if self.browser_engine == BROWSER_ENGINE_CLOAKBROWSER and self.browser:
-                try:
+
+        if self.browser_engine == BROWSER_ENGINE_CLOAKBROWSER and self.browser:
+            try:
+                if not already_dead:
                     await self.browser.close()
-                except Exception:
-                    pass
-            if self._local_proxy:
+            except Exception:
+                pass
+
+        if self._local_proxy:
+            try:
                 self._local_proxy.stop()
-                self._local_proxy = None
-            self.browser = None
-            self.context = None
-            self.page = None
-            self._notify_process_exited()
-            self._notify_browser_closed()
-            self._ready_notified = False
+            except Exception:
+                pass
+            self._local_proxy = None
+
+        self._notify_process_exited()
+        self._notify_browser_closed()
+        self._ready_notified = False
 
     def add_process_exit_callback(self, callback: Callable[[], None]) -> None:
         if not callable(callback):

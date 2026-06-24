@@ -10,6 +10,7 @@ Flickable {
     contentHeight: content.height + 48
     clip: true
     property var bridge: typeof proxiesBridge !== "undefined" ? proxiesBridge : null
+    property bool allSelected: false
 
     Column {
         id: content
@@ -61,9 +62,10 @@ Flickable {
                 padding: 18
                 Text { id: poolsTitle; text: "Proxy groups"; color: Theme.text; font.pixelSize: 16; font.bold: true }
                 Row { id: poolActions; anchors.left: parent.left; anchors.right: parent.right; anchors.top: poolsTitle.bottom; anchors.topMargin: 14; spacing: 8
+                    property bool isAllSelected: root.bridge ? (root.bridge.selectedPool === "All") : true
                     PrimaryButton { width: (parent.width - 16) / 3; text: "New"; icon: "plus"; onClicked: { poolNameInput.text = ""; poolDialog.mode = "new"; poolDialog.open() } }
-                    PrimaryButton { width: (parent.width - 16) / 3; text: "Rename"; secondary: true; onClicked: { poolNameInput.text = root.bridge ? root.bridge.selectedPool : ""; poolDialog.mode = "rename"; poolDialog.open() } }
-                    PrimaryButton { width: (parent.width - 16) / 3; text: "Delete"; danger: true; onClicked: if (root.bridge) root.bridge.deleteSelectedPool() }
+                    PrimaryButton { width: (parent.width - 16) / 3; text: "Rename"; secondary: true; enabled: !poolActions.isAllSelected; onClicked: { poolNameInput.text = root.bridge ? root.bridge.selectedPool : ""; poolDialog.mode = "rename"; poolDialog.open() } }
+                    PrimaryButton { width: (parent.width - 16) / 3; text: "Delete"; danger: true; enabled: !poolActions.isAllSelected; onClicked: if (root.bridge) root.bridge.deleteSelectedPool() }
                 }
                 ListView {
                     anchors.left: parent.left
@@ -91,13 +93,18 @@ Flickable {
                 Layout.fillWidth: true
                 Layout.preferredHeight: 560
                 GlassCard { Layout.fillWidth: true; Layout.preferredHeight: 64; padding: 14
-                    Row { anchors.fill: parent; spacing: 12
-                        Text { text: root.bridge && root.bridge.selectedPool ? "Group: " + root.bridge.selectedPool : "All proxy groups"; color: Theme.text; font.pixelSize: 16; font.bold: true; anchors.verticalCenter: parent.verticalCenter }
-                        Item { width: Math.max(0, parent.width - 620); height: 1 }
-                        PrimaryButton { width: 130; text: "Check Group"; icon: "settings"; secondary: true; onClicked: if (root.bridge) root.bridge.checkAll() }
-                        PrimaryButton { width: 120; text: "Release"; secondary: true; onClicked: if (root.bridge) root.bridge.releaseSelected() }
-                        PrimaryButton { width: 120; text: "Remove"; danger: true; onClicked: if (root.bridge) root.bridge.removeSelected() }
-                        PrimaryButton { width: 90; text: "Clear"; secondary: true; onClicked: if (root.bridge) root.bridge.clearSelection() }
+                    RowLayout { anchors.fill: parent; spacing: 12
+                        Text { text: root.bridge && root.bridge.selectedPool ? "Group: " + root.bridge.selectedPool : "All proxies"; color: Theme.text; font.pixelSize: 16; font.bold: true; Layout.alignment: Qt.AlignVCenter }
+                        Item { Layout.fillWidth: true; Layout.fillHeight: true }
+                        PrimaryButton { Layout.preferredWidth: 130; text: "Check Group"; icon: "settings"; secondary: true; onClicked: if (root.bridge) root.bridge.checkAll() }
+                        PrimaryButton { Layout.preferredWidth: 200; text: "Upsert Location"; icon: "plus"; secondary: true; onClicked: if (root.bridge) root.bridge.autoUpsertGroup("location") }
+                        PrimaryButton { Layout.preferredWidth: 180; text: "Upsert Schema"; icon: "plus"; secondary: true; onClicked: if (root.bridge) root.bridge.autoUpsertGroup("schema") }
+                        PrimaryButton { Layout.preferredWidth: 130; text: "Clean Groups"; secondary: true; onClicked: if (root.bridge) root.bridge.cleanDerivedPools() }
+                        PrimaryButton { Layout.preferredWidth: 120; text: "Release"; secondary: true; onClicked: if (root.bridge) root.bridge.releaseSelected() }
+                        PrimaryButton { Layout.preferredWidth: 120; text: root.allSelected ? "Deselect All" : "Select All"; secondary: true; onClicked: { if (root.bridge) { if (root.allSelected) { root.bridge.clearSelection(); root.allSelected = false } else { root.bridge.selectAll(); root.allSelected = true } } } }
+                        PrimaryButton { Layout.preferredWidth: 120; text: "Remove All"; danger: true; onClicked: removeAllDialog.open() }
+                        PrimaryButton { Layout.preferredWidth: 120; text: "Remove"; danger: true; onClicked: if (root.bridge) root.bridge.removeSelected() }
+                        PrimaryButton { Layout.preferredWidth: 90; text: "Clear"; secondary: true; onClicked: if (root.bridge) root.bridge.clearSelection() }
                     }
                 }
                 ListView {
@@ -149,11 +156,25 @@ Flickable {
         anchors.centerIn: Overlay.overlay
         padding: 0
         background: Rectangle { color: Theme.elevated; radius: 18; border.color: Theme.border }
+        onOpened: { poolNameError.text = "" }
         contentItem: Column { anchors.fill: parent; anchors.margins: 22; spacing: 16
             Text { text: poolDialog.mode === "rename" ? "Rename proxy group" : "New proxy group"; color: Theme.text; font.pixelSize: 20; font.bold: true }
             FormField { id: poolNameInput; width: parent.width; label: "Group name"; placeholder: "US residential" }
+            Text { id: poolNameError; text: ""; color: Theme.danger; font.pixelSize: 12; visible: text.length > 0 }
             Row { spacing: 10
-                PrimaryButton { width: 120; text: "Save"; icon: "save"; onClicked: { if (root.bridge) { if (poolDialog.mode === "rename") root.bridge.renameSelectedPool(poolNameInput.text); else root.bridge.createPool(poolNameInput.text) } poolDialog.close() } }
+                PrimaryButton { width: 120; text: "Save"; icon: "save"; onClicked: {
+                    var name = poolNameInput.text.trim()
+                    if (name === "All") {
+                        poolNameError.text = "'All' is a reserved name"
+                        return
+                    }
+                    poolNameError.text = ""
+                    if (root.bridge) {
+                        if (poolDialog.mode === "rename") root.bridge.renameSelectedPool(name)
+                        else root.bridge.createPool(name)
+                    }
+                    poolDialog.close()
+                } }
                 PrimaryButton { width: 120; text: "Cancel"; secondary: true; onClicked: poolDialog.close() }
             }
         }
@@ -188,6 +209,28 @@ Flickable {
                     }
                 }
                 PrimaryButton { width: 120; text: "Cancel"; secondary: true; onClicked: proxyEditDialog.close() }
+            }
+        }
+    }
+
+    Dialog {
+        id: removeAllDialog
+        modal: true
+        width: 420
+        height: 200
+        anchors.centerIn: Overlay.overlay
+        padding: 0
+        background: Rectangle { color: Theme.elevated; radius: 18; border.color: Theme.border }
+        contentItem: Column {
+            anchors.fill: parent
+            anchors.margins: 22
+            spacing: 16
+            Text { text: "Remove all proxies"; color: Theme.text; font.pixelSize: 20; font.bold: true }
+            Text { text: "Remove ALL proxies from ALL groups? This cannot be undone."; color: Theme.text; font.pixelSize: 13; wrapMode: Text.WordWrap; width: parent.width }
+            Row {
+                spacing: 10
+                PrimaryButton { width: 120; text: "Remove All"; danger: true; onClicked: { if (root.bridge) root.bridge.removeAll(); root.allSelected = false; removeAllDialog.close() } }
+                PrimaryButton { width: 120; text: "Cancel"; secondary: true; onClicked: removeAllDialog.close() }
             }
         }
     }

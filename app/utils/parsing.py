@@ -36,10 +36,22 @@ def parse_proxy_line(line: str) -> Tuple[str, int, str, str]:
     raw = line.strip()
     if "://" in raw:
         _, raw = raw.split("://", 1)
+    # Handle user:pass@host:port format
+    user = ""
+    password = ""
+    if "@" in raw:
+        creds, raw = raw.rsplit("@", 1)
+        if ":" in creds:
+            user, password = creds.split(":", 1)
+        else:
+            user = creds
     parts = [p.strip() for p in raw.split(":")]
-    if len(parts) != 4:
-        raise ValueError("Proxy line must be ip:port:login:password")
-    host, port_str, user, password = parts
+    if len(parts) == 4:
+        host, port_str, user, password = parts
+    elif len(parts) == 2:
+        host, port_str = parts
+    else:
+        raise ValueError("Proxy line must be ip:port[:login:password]")
     try:
         port = int(port_str)
     except ValueError:
