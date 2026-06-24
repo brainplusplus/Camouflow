@@ -248,6 +248,11 @@ Flickable {
         profileCookiesJson.text = profilesBridge.getProfileCookiesJson(editingProfile)
         profileCookiesDialog.open()
     }
+    function openDuplicateDialog(profileName) {
+        duplicateSourceName.text = profileName
+        duplicateNewName.text = profileName + "_copy"
+        duplicateDialog.open()
+    }
     function openTagsModal() {
         settingsBridge.refresh()
         tagName.text = ""
@@ -1011,8 +1016,40 @@ Flickable {
         MenuItem { text: "Open browser"; onTriggered: profilesBridge.startProfile(root.contextProfile) }
         MenuItem { text: "Variables"; onTriggered: root.openVariablesModal(root.contextProfile) }
         MenuItem { text: "Cookies"; onTriggered: root.openCookiesModal(root.contextProfile) }
+        MenuItem { text: "Duplicate"; onTriggered: root.openDuplicateDialog(root.contextProfile) }
         MenuItem { text: "Run selected scenario"; onTriggered: { scenariosBridge.setRunProfile(root.contextProfile); scenariosBridge.runSelected() } }
         MenuSeparator {}
         MenuItem { text: "Delete profile"; onTriggered: profilesBridge.deleteProfile(root.contextProfile) }
+    }
+
+    Dialog {
+        id: duplicateDialog
+        modal: true
+        width: 380
+        height: 200
+        anchors.centerIn: parent
+        background: Rectangle { color: Theme.elevated; border.color: Theme.border; radius: 12 }
+        contentItem: Column {
+            anchors.fill: parent
+            anchors.margins: 20
+            spacing: 16
+            Text { text: "Duplicate profile"; color: Theme.text; font.pixelSize: 16; font.bold: true }
+            Text { id: duplicateSourceName; visible: false; text: "" }
+            FormField { id: duplicateNewName; Layout.fillWidth: true; label: "New profile name" }
+            Row {
+                spacing: 10
+                anchors.horizontalCenter: parent.horizontalCenter
+                PrimaryButton {
+                    width: 120
+                    text: "Duplicate"
+                    icon: "copy"
+                    onClicked: {
+                        profilesBridge.duplicateProfile(duplicateSourceName.text, duplicateNewName.text)
+                        duplicateDialog.close()
+                    }
+                }
+                PrimaryButton { width: 100; text: "Cancel"; secondary: true; onClicked: duplicateDialog.close() }
+            }
+        }
     }
 }

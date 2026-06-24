@@ -944,6 +944,29 @@ class ProfilesBridge(QObject):
         self._emit_message(f"Profile {name} deleted")
         self.refresh()
 
+    @pyqtSlot(str, str)
+    def duplicateProfile(self, sourceName: str, newName: str) -> None:  # noqa: N802
+        sourceName = str(sourceName or "").strip()
+        newName = str(newName or "").strip()
+        if not sourceName or not newName:
+            self._emit_message("Source and new name are required")
+            return
+        existing = next((a for a in db_get_accounts() if str(a.get("name") or "").lower() == newName.lower()), None)
+        if existing:
+            self._emit_message(f"Profile {newName} already exists")
+            return
+        acc = next((item for item in db_get_accounts() if str(item.get("name") or "") == sourceName), None)
+        if not acc:
+            self._emit_message(f"Profile {sourceName} not found")
+            return
+        clone = dict(acc)
+        clone["name"] = newName
+        for key in ("id", "last_active"):
+            clone.pop(key, None)
+        db_add_account(clone)
+        self._emit_message(f"Profile duplicated as {newName}")
+        self.refresh()
+
     @pyqtSlot(str)
     def startProfile(self, name: str) -> None:  # noqa: N802
         name = str(name or "").strip()
