@@ -17,6 +17,7 @@ GlassCard {
     signal stopClicked()
     signal settingsClicked()
     signal deleteClicked()
+    signal duplicateClicked()
     signal contextRequested(real x, real y)
     height: 78
     padding: 18
@@ -67,10 +68,11 @@ GlassCard {
 
         Row {
             Layout.alignment: Qt.AlignRight | Qt.AlignVCenter
-            Layout.minimumWidth: 124
+            Layout.minimumWidth: 160
             spacing: 8
             PrimaryButton { width: 36; icon: running ? "stop" : "play"; text: ""; secondary: true; onClicked: running ? root.stopClicked() : root.startClicked() }
             PrimaryButton { width: 36; icon: "settings"; text: ""; secondary: true; onClicked: root.settingsClicked() }
+            PrimaryButton { width: 36; icon: "copy"; text: ""; secondary: true; onClicked: root.duplicateClicked() }
             PrimaryButton { width: 36; icon: "trash"; text: ""; danger: true; onClicked: root.deleteClicked() }
         }
     }

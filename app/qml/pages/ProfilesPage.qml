@@ -333,6 +333,7 @@ Flickable {
                 onStartClicked: profilesBridge.startProfile(model.name)
                 onStopClicked: profilesBridge.stopProfile(model.name)
                 onSettingsClicked: root.openProfileModal(model.name)
+                onDuplicateClicked: root.openDuplicateDialog(model.name)
                 onDeleteClicked: profilesBridge.deleteProfile(model.name)
                 onContextRequested: function(x, y) {
                     root.contextProfile = model.name
@@ -1025,20 +1026,20 @@ Flickable {
     Dialog {
         id: duplicateDialog
         modal: true
-        width: 380
-        height: 200
+        width: 480
+        height: 220
         anchors.centerIn: parent
         background: Rectangle { color: Theme.elevated; border.color: Theme.border; radius: 12 }
         contentItem: Column {
             anchors.fill: parent
-            anchors.margins: 20
-            spacing: 16
-            Text { text: "Duplicate profile"; color: Theme.text; font.pixelSize: 16; font.bold: true }
+            anchors.margins: 24
+            spacing: 18
+            Text { text: "Duplicate profile"; color: Theme.text; font.pixelSize: 16; font.bold: true; width: parent.width }
             Text { id: duplicateSourceName; visible: false; text: "" }
-            FormField { id: duplicateNewName; Layout.fillWidth: true; label: "New profile name" }
+            FormField { id: duplicateNewName; width: parent.width; label: "New profile name" }
             Row {
                 spacing: 10
-                anchors.horizontalCenter: parent.horizontalCenter
+                anchors.right: parent.right
                 PrimaryButton {
                     width: 120
                     text: "Duplicate"

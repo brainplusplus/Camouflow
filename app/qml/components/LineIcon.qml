@@ -48,6 +48,7 @@ Canvas {
         else if (name === "save") { rect(4,4,12,12,2); ctx.beginPath(); ctx.moveTo(7,4); ctx.lineTo(7,8); ctx.lineTo(13,8); ctx.lineTo(13,4); ctx.moveTo(7,16); ctx.lineTo(7,12); ctx.lineTo(13,12); ctx.lineTo(13,16); ctx.stroke(); }
         else if (name === "zap") { ctx.beginPath(); ctx.moveTo(11,2); ctx.lineTo(5,11); ctx.lineTo(10,11); ctx.lineTo(8,18); ctx.lineTo(15,8); ctx.lineTo(10,8); ctx.closePath(); ctx.stroke(); }
         else if (name === "search") { circle(8,8,5); ctx.beginPath(); ctx.moveTo(12,12); ctx.lineTo(17,17); ctx.stroke(); }
+        else if (name === "copy") { rect(6,6,9,9,1.5); rect(4,8,9,9,1.5); }
         else { circle(10,10,7); }
         ctx.restore()
     }
