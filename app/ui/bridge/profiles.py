@@ -423,6 +423,7 @@ class ProfilesBridge(QObject):
                 overrides["humanize"] = bool(legacy.get("humanize", False))
                 overrides["human_preset"] = str(legacy.get("human_preset") or "default")
                 overrides["geoip"] = bool(legacy.get("geoip", False))
+                overrides["block_images"] = bool(legacy.get("block_images", False))
                 overrides["screen_width"] = legacy.get("screen_width") or 0
                 overrides["screen_height"] = legacy.get("screen_height") or 0
                 overrides["launch_args"] = legacy.get("launch_args") or []
@@ -458,6 +459,7 @@ class ProfilesBridge(QObject):
                 "humanize": bool(overrides.get("humanize", False)),
                 "human_preset": str(overrides.get("human_preset") or "default"),
                 "geoip": bool(overrides.get("geoip", False)),
+                "block_images": bool(overrides.get("block_images", False)),
                 "screen_width": int(overrides.get("screen_width") or 0),
                 "screen_height": int(overrides.get("screen_height") or 0),
                 "launch_args": list(overrides.get("launch_args") or []),
@@ -533,7 +535,7 @@ class ProfilesBridge(QObject):
             val = str(raw_overrides.get(key) or "").strip()
             if val:
                 overrides[key] = val
-        for key in ("humanize", "geoip"):
+        for key in ("humanize", "geoip", "block_images"):
             overrides[key] = bool(raw_overrides.get(key, False))
         hc = raw_overrides.get("hardware_concurrency")
         if hc not in (None, "", 0, "0"):

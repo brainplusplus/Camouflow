@@ -95,6 +95,7 @@ Flickable {
             "humanize": humanizeCheckbox.checked,
             "human_preset": humanPresetCombo.currentText,
             "geoip": geoipCheckbox.checked,
+            "block_images": !loadImagesCheckbox.checked,
             "screen_width": sw,
             "screen_height": sh,
             "launch_args": launchArgsField.text.trim() ? launchArgsField.text.split("\n").map(function(s){return s.trim()}).filter(function(s){return s.length>0}) : [],
@@ -143,6 +144,7 @@ Flickable {
         editorNotes.text = data.notes || ""
         geoipCheckbox.checked = !!ov.geoip
         humanizeCheckbox.checked = !!ov.humanize
+        loadImagesCheckbox.checked = !ov.block_images
         humanPresetCombo.currentIndex = ["default","careful"].indexOf(ov.human_preset || "default")
         platformCombo.currentIndex = ["","windows","linux","macos"].indexOf(ov.platform || "")
         // GPU Preset: 0=Inherit, 1=Custom, 2+=concrete presets
@@ -612,6 +614,7 @@ Flickable {
                         spacing: 20
                         DarkCheckBox { id: geoipCheckbox; text: "GeoIP (resolve at start)"; checked: false }
                         DarkCheckBox { id: humanizeCheckbox; text: "Humanize"; checked: false }
+                        DarkCheckBox { id: loadImagesCheckbox; text: "Load images"; checked: true }
                     }
                     Row {
                         width: parent.width
