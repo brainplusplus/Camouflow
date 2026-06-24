@@ -32,9 +32,45 @@ Flickable {
         var mode = proxyModeCombo.currentText.toLowerCase()
         var enabled = proxyEnable.checked
         proxyModeRow.visible = enabled
-        proxyPoolRow.visible = enabled && mode === "random"
-        proxyFixedRow.visible = enabled && mode === "fixed"
+        proxyPoolRow.visible = enabled && (mode === "random" || mode === "fixed")
+        proxyFixedProxyRow.visible = enabled && mode === "fixed"
         proxyManualRow.visible = enabled && (mode === "manual" || mode === "fixed")
+    }
+
+    function loadFixedProxyList() {
+        proxyFixedProxyCombo.model = []
+        var poolName = proxyPoolCombo.currentText
+        if (!poolName) return
+        try {
+            var items = JSON.parse(profilesBridge.getProxiesForPool(poolName))
+            var labels = []
+            for (var i = 0; i < items.length; i++) {
+                labels.push(items[i].label || items[i].value)
+            }
+            proxyFixedProxyCombo.model = labels.length ? labels : ["(no proxies)"]
+        } catch(e) {
+            proxyFixedProxyCombo.model = ["(error)"]
+        }
+    }
+
+    function onFixedProxySelected() {
+        var poolName = proxyPoolCombo.currentText
+        if (!poolName) return
+        var proxyLabel = proxyFixedProxyCombo.currentText
+        if (!proxyLabel || proxyLabel === "(no proxies)" || proxyLabel === "(error)") return
+        try {
+            var items = JSON.parse(profilesBridge.getProxiesForPool(poolName))
+            for (var i = 0; i < items.length; i++) {
+                if ((items[i].label || items[i].value) === proxyLabel) {
+                    var details = profilesBridge.getProxyFromPool(poolName, String(items[i].index))
+                    editorProxyHost.text = details.proxy_host || ""
+                    editorProxyPort.text = details.proxy_port ? String(details.proxy_port) : ""
+                    editorProxyUser.text = details.proxy_user || ""
+                    editorProxyPassword.text = details.proxy_password || ""
+                    return
+                }
+            }
+        } catch(e) {}
     }
 
     function updateEngineSpecific() {
@@ -68,7 +104,7 @@ Flickable {
             "tags": selectedTags,
             "notes": editorNotes.text,
             "proxy_mode": mode,
-            "proxy_pool": mode === "random" ? proxyPoolCombo.currentText : "",
+            "proxy_pool": (mode === "random" || mode === "fixed") ? proxyPoolCombo.currentText : "",
             "proxy_host": "",
             "proxy_port": "",
             "proxy_user": "",
@@ -130,6 +166,11 @@ Flickable {
         var pmIdx = ["random","fixed","manual"].indexOf(pm)
         proxyModeCombo.currentIndex = pmIdx >= 0 ? pmIdx : 0
         proxyPoolCombo.currentIndex = Math.max(0, proxyPoolCombo.find(data.proxy_pool || ""))
+        if (pm === "fixed") {
+            root.loadFixedProxyList()
+        } else {
+            proxyFixedProxyCombo.model = []
+        }
         editorProxyHost.text = data.proxy_host || ""
         editorProxyPort.text = data.proxy_port || ""
         editorProxyUser.text = data.proxy_user || ""
@@ -575,18 +616,23 @@ Flickable {
                             width: 240; height: 36
                             model: profilesBridge ? profilesBridge.proxyPoolsModel : null
                             textRole: "name"
+                            onActivated: {
+                                if (proxyModeCombo.currentText.toLowerCase() === "fixed")
+                                    root.loadFixedProxyList()
+                            }
                         }
                     }
                     Row {
-                        id: proxyFixedRow
+                        id: proxyFixedProxyRow
                         width: parent.width
                         visible: false
                         spacing: 10
-                        Text { text: "Fixed"; color: Theme.muted; font.pixelSize: 13; width: 70; anchors.verticalCenter: parent.verticalCenter }
+                        Text { text: "Proxy"; color: Theme.muted; font.pixelSize: 13; width: 70; anchors.verticalCenter: parent.verticalCenter }
                         DarkComboBox {
-                            id: proxyFixedCombo
+                            id: proxyFixedProxyCombo
                             width: 300; height: 36
-                            placeholderText: "Select proxy"
+                            model: []
+                            onActivated: root.onFixedProxySelected()
                         }
                     }
                     GridLayout {
